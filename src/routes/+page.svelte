@@ -44,7 +44,7 @@
    let file = 'F:/Community/0410.mp4'
    src = convertFileSrc(file)
   }
-
+  invoke("download", { show: show })
   getVideoPath(show)
 </script>
 

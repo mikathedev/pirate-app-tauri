@@ -61,23 +61,5 @@
         "4": "/tvs/Invincible/Season%204/Invincible%20%282021%29%20-%20S04E04%20-%20HURM%20%5BWEBDL-1080p%5D%5BEAC3%205.1%5D%5Bh264%5D-ETHEL.mkv"
       }
     }
-  },
-  "Arcane": {
-    "path": "F:/Arcane",
-    "episode": 2,
-    "season": "01",
-    "show": true,
-    "url": "https://a.111477.xyz/tvs/Arcane/",
-    "episode links": {
-      "1": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E01%20-%20Welcome%20to%20the%20Playground%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "2": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E02%20-%20Some%20Mysteries%20Are%20Better%20Left%20Unsolved%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "3": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E03%20-%20The%20Base%20Violence%20Necessary%20for%20Change%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "4": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E04%20-%20Happy%20Progress%20Day%21%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "5": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E05%20-%20Everybody%20Wants%20to%20Be%20My%20Enemy%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "6": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E06%20-%20When%20These%20Walls%20Come%20Tumbling%20Down%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "7": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E07%20-%20The%20Boy%20Savior%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "8": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E08%20-%20Oil%20and%20Water%20%281080p%20BluRay%20x265%20Ghost%29.mkv",
-      "9": "/tvs/Arcane/Season%201/Arcane%20%282021%29%20-%20S01E09%20-%20The%20Monster%20You%20Created%20%281080p%20BluRay%20x265%20Ghost%29.mkv"
-    }
   }
 }

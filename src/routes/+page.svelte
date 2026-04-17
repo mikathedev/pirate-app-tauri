@@ -10,12 +10,20 @@
 
   let playing = $state(false);
 
+  function darkMode() {
+   document.body.classList.toggle('dark');
+  }
   // CHANGED: svelte action to track video state
   function trackPlaying(node: HTMLElement) {
    const video = node.querySelector('video');
    if (!video) return {};
-   const onPlay = () => playing = true;
-   const onPause = () => playing = false;
+   const onPlay = () => {
+    playing = true
+    darkMode()
+   };
+   const onPause = () => {
+    playing = false;
+   }
    video.addEventListener('play', onPlay);
    video.addEventListener('pause', onPause);
    return {
@@ -102,4 +110,7 @@
   width: 100%;
   max-width: calc(95vh * (16 / 9));
  }
+
+ body.dark { background: black; color: white; }
+
 </style>

@@ -1,13 +1,11 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use serde_json::Value;
+
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::fmt::format;
-use stream_download::source::DecodeError;
-use stream_download::storage::temp::TempStorageProvider;
-use stream_download::{Settings, StreamDownload};
-use tokio::io::AsyncWriteExt;
+use std::io::{Read, Write};
+use futures_util::StreamExt;
+
 
 #[derive(Deserialize)]
 struct Show {
@@ -20,7 +18,7 @@ struct Show {
     episode_links: HashMap<String, HashMap<String, String>>,
 }
 fn get_json_data() -> String {
-    return std::fs::read_to_string("shows.json").unwrap()
+    std::fs::read_to_string("shows.json").unwrap()
 }
 
 fn get_link(show: &str) -> String {
@@ -38,16 +36,37 @@ fn get_link(show: &str) -> String {
     }
 }
 #[tauri::command]
-#[tokio::main]
-async fn download(show: &str) -> Result<Response, String>{
+async fn download(show: &str) -> Result<String, String>{
     let link = get_link(show);
     let json_data = get_json_data();
     let shows: HashMap<String, Show> = serde_json::from_str(&json_data).unwrap();
     let show = &shows[show];
     let file_name = format!("{}/{}{}{}", show.path, show.season, format!("{:0>2}", show.episode.to_string()), link.split(".").last().unwrap().to_string());
-    let mut file = std::fs::File::create(file_name).map_err(|e| e.to_string())?;
+    //client logic
+    let client = reqwest::Client::new();
+    let mut response = client.get(&link).send().await.map_err(|e| e.to_string())?;
+    let size = response.content_length().unwrap_or(0);
+    let mut file = std::fs::File::create(&file_name).unwrap();
+    let mut stream = response.bytes_stream();
+    println!("Downloading {}...", file_name);
 
-    Ok(())
+    if let Some(parent) = std::path::Path::new(&file_name).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    while let Some(chunk) = &stream.next().await {
+        let chunk_error_handler = chunk.as_ref().map_err(|e| e.to_string())?;
+        file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
+        let progress = chunk_error_handler.len() as f64 / size as f64;
+        println!("{:.2}%", progress * 100.0);
+    }
+
+    println!(
+        "Downloaded {}",
+        file_name
+    );
+
+    Ok(file_name)
 
 }
 

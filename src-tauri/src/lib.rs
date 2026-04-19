@@ -158,10 +158,8 @@ struct Item {
             println!("{} {}", links.len(), sizes.len());
             items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
         }
-        println!("{}", format!("S{}E{}", season, episode));
-        for item in items.iter().filter(|item| item.url.contains(&format!("S{}E{}", season, episode))) {
-            println!("{:?} \n \n", item);
-        }
+        println!("{}", format!("S{:0>2}E{}", season, episode));
+        let lowest = items.iter().filter(|item| item.url.contains(&format!("S{:0>2}E{}", season, episode))).min_by_key(|item|item.size).unwrap();
     } else {
         println!("season not found");
     }

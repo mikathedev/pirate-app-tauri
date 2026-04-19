@@ -1,10 +1,10 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{Read, Write};
 use futures_util::StreamExt;
+use scraper::{Html, Selector};
 
 
 #[derive(Deserialize)]
@@ -104,12 +104,36 @@ fn get_video_path(show: &str) -> String {
     }
     "".to_string()
 }
+
+#[tauri::command]
+async fn scrape(show: String) {
+    let json = get_json_data();
+    let content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
+    let show_info = &content[&show];
+    let season = &show_info.season;
+    let url = &show_info.url;
+    let response = reqwest::get(url).await.unwrap();
+    let html = response.text().await.unwrap();
+    println!("{}", html);
+    if html.contains(&season.parse::<u32>().unwrap().to_string()) {
+        println!("found season");
+        let episodes = reqwest::get(format!("{}/Season&20{}", url, &season.parse::<u32>().unwrap().to_string())).await.unwrap().text().await.unwrap();
+        let doc = Html::parse_document(&episodes.as_str());
+
+        println!("{}", episodes);
+
+
+    } else {
+        println!("season not found");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path])
+        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

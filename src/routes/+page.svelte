@@ -9,7 +9,6 @@
   let src = $state("")
   let dialog: HTMLDialogElement
   let options = $state([])
-  let playing = $state(false);
 
   function closeWindow() {
      const window = getCurrentWindow();
@@ -30,7 +29,7 @@
 
   onMount((): void =>{
    get_options()
-
+   invoke("scrape", { show: show }).then((res) => {console.log(res)})
   })
 
 </script>
@@ -41,7 +40,6 @@
     {#each options as show}
      <option value={show}>{show}</option>
     {/each}
-
  </select>
  <button onclick={() => getVideoPath(show)}>Get Video</button>
  <button onclick={() => downloadFile()}>run download</button>

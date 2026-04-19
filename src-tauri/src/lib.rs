@@ -1,8 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::env;
-use std::io::{Read, Write};
+use std::io::Write;
 use futures_util::StreamExt;
 use scraper::{Html, Selector};
 
@@ -12,11 +12,11 @@ struct Show {
     path: String,
     episode: u32,
     season: String,
-    show: bool,
     url: String,
-    #[serde(rename = "episode links")]  // CHANGED: handle the space in key
+    #[serde(rename = "episode links")]
     episode_links: HashMap<String, HashMap<String, String>>,
 }
+
 fn get_json_data() -> String {
     std::fs::read_to_string("shows.json").unwrap()
 }
@@ -45,7 +45,7 @@ async fn download(show: &str) -> Result<String, String>{
     //client logic
     println!("starting {:?}", file_name);
     let client = reqwest::Client::new();
-    let mut response = client.get(&link).send().await.map_err(|e| e.to_string())?;
+    let response = client.get(&link).send().await.map_err(|e| e.to_string())?;
     let size = response.content_length().unwrap_or(0);
     let mut file = std::fs::File::create(&file_name).unwrap();
     let mut stream = response.bytes_stream();
@@ -107,6 +107,11 @@ fn get_video_path(show: &str) -> String {
 
 #[tauri::command]
 async fn scrape(show: String) {
+    #[derive(Default)]
+    struct Item {
+        url: String,
+        size: u32,
+    }
     let json = get_json_data();
     let content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
     let show_info = &content[&show];
@@ -114,13 +119,16 @@ async fn scrape(show: String) {
     let url = &show_info.url;
     let response = reqwest::get(url).await.unwrap();
     let html = response.text().await.unwrap();
-    println!("{}", html);
     if html.contains(&season.parse::<u32>().unwrap().to_string()) {
         println!("found season");
-        let episodes = reqwest::get(format!("{}/Season&20{}", url, &season.parse::<u32>().unwrap().to_string())).await.unwrap().text().await.unwrap();
+        let episodes = reqwest::get(format!("{}Season%20{}", url, &season.parse::<u32>().unwrap().to_string())).await.unwrap().text().await.unwrap();
         let doc = Html::parse_document(&episodes.as_str());
-
-        println!("{}", episodes);
+        let selector = Selector::parse("tr").unwrap();
+        let mut info = Vec::<Item>::new();
+        println!("{}", format!("{}Season%20{}", url, &season.parse::<u32>().unwrap().to_string()));
+        for tr in doc.select(&selector) {
+            println!("tr: {:?} \n \n \n", tr);
+        }
 
 
     } else {

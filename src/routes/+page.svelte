@@ -29,7 +29,7 @@
 
   onMount((): void =>{
    get_options()
-   invoke("scrape", { show: show }).then((res) => {console.log(res)})
+
   })
 
 </script>
@@ -67,7 +67,7 @@
 
 <dialog bind:this={dialog}>
  <p>This is a native modal!</p>
- <button onclick={() => getVideoPath(show)}>Get Video2</button>
+ <button onclick={() => invoke("scrape", { show: show }).then((res) => {console.log(res)})}>scrape</button>
  <button onclick={() => dialog.close()}>Close</button>
 </dialog>
 

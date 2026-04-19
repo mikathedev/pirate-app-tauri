@@ -105,17 +105,20 @@ fn get_video_path(show: &str) -> String {
     "".to_string()
 }
 
+
 #[tauri::command]
 async fn scrape(show: String) {
     #[derive(Default)]
-    struct Item {
+    #[derive(Debug)]
+struct Item {
         url: String,
-        size: u32,
+        size: f32,
     }
     let json = get_json_data();
     let content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
     let show_info = &content[&show];
     let season = &show_info.season;
+    let episode = &show_info.episode.to_string();
     let url = &show_info.url;
     let response = reqwest::get(url).await.unwrap();
     let html = response.text().await.unwrap();
@@ -123,14 +126,42 @@ async fn scrape(show: String) {
         println!("found season");
         let episodes = reqwest::get(format!("{}Season%20{}", url, &season.parse::<u32>().unwrap().to_string())).await.unwrap().text().await.unwrap();
         let doc = Html::parse_document(&episodes.as_str());
-        let selector = Selector::parse("tr").unwrap();
-        let mut info = Vec::<Item>::new();
-        println!("{}", format!("{}Season%20{}", url, &season.parse::<u32>().unwrap().to_string()));
-        for tr in doc.select(&selector) {
-            println!("tr: {:?} \n \n \n", tr);
+        let url_selector = Selector::parse("tr td a").unwrap();
+        let size_selector = Selector::parse(".size").unwrap();
+        let target_url = url.to_string().replace("https://a.111477.xyz", "");
+        let mut links: Vec<String> = doc.select(&url_selector)
+            .filter_map(|x| x.value().attr("href"))
+            .filter(|href| href.contains(&target_url))
+            .map(|href| href.to_string())
+            .collect();
+        let sizes: Vec<f32> = doc.select(&size_selector)
+            .map(|x| { println!("Found: {:?}", x.inner_html()); x })
+            .filter_map(|x| {
+                let html = x.inner_html();
+
+                if html.contains("GB") {
+                    Some(html.replace(" GB", "").parse::<f32>().map_err(|e| {println!("error with parsing: {}", e)}).unwrap())
+                } else if html.contains("MB") {
+                    Some(html.parse::<f32>().map_err(|e| {println!("error with parsing: {}", e)}).unwrap() / 1024f32)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut items: Vec<Item> = Vec::new();
+        println!("{:?} {}", links.len(), sizes.len());
+        if links.len() != sizes.len() {
+            println!("not the same removing first item");
+            links.remove(0);
+            items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
+        } else if links.len() == sizes.len() {
+            println!("{} {}", links.len(), sizes.len());
+            items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
         }
-
-
+        println!("{}", format!("S{}E{}", season, episode));
+        for item in items.iter().filter(|item| item.url.contains(&format!("S{}E{}", season, episode))) {
+            println!("{:?} \n \n", item);
+        }
     } else {
         println!("season not found");
     }

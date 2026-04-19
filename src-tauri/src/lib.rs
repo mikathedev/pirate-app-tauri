@@ -41,8 +41,9 @@ async fn download(show: &str) -> Result<String, String>{
     let json_data = get_json_data();
     let shows: HashMap<String, Show> = serde_json::from_str(&json_data).unwrap();
     let show = &shows[show];
-    let file_name = format!("{}/{}{}{}", show.path, show.season, format!("{:0>2}", show.episode.to_string()), link.split(".").last().unwrap().to_string());
+    let file_name = format!("{}/{}{}.{}", show.path, show.season, format!("{:0>2}", show.episode.to_string()), link.split(".").last().unwrap().to_string());
     //client logic
+    println!("starting {:?}", file_name);
     let client = reqwest::Client::new();
     let mut response = client.get(&link).send().await.map_err(|e| e.to_string())?;
     let size = response.content_length().unwrap_or(0);
@@ -54,10 +55,13 @@ async fn download(show: &str) -> Result<String, String>{
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    let mut downloaded = 0;
     while let Some(chunk) = &stream.next().await {
         let chunk_error_handler = chunk.as_ref().map_err(|e| e.to_string())?;
         file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
-        let progress = chunk_error_handler.len() as f64 / size as f64;
+
+        downloaded += chunk_error_handler.len();
+        let progress = downloaded as f64 / size as f64;
         println!("{:.2}%", progress * 100.0);
     }
 
@@ -81,12 +85,31 @@ fn get_options() -> Vec<String> {
     options
 }
 
+#[tauri::command]
+fn get_video_path(show: &str) -> String {
+    let content = get_json_data();
+    let shows: HashMap<String, Show> = serde_json::from_str(&content).unwrap();
+    let show_info = &shows[show];
+    let season = &show_info.season;
+    let episode = &show_info.episode.to_string();
+    let episodes = std::fs::read_dir(&show_info.path).unwrap();
+
+    println!("season: {}, episode: {}", season, episode);
+    for x in episodes {
+        let path_str = x.unwrap().path().display().to_string();
+        if path_str.contains(&format!("{}{:0>2}", season, episode)) {
+            println!("found {:?}", path_str);
+            return path_str;
+        }
+    }
+    "".to_string()
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![download, get_options])
+        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

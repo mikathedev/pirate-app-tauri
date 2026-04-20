@@ -1,10 +1,11 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use std::collections::HashMap;
-use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::Write;
 use futures_util::StreamExt;
 use scraper::{Html, Selector};
+use regex::Regex;
 
 
 #[derive(Deserialize)]
@@ -105,15 +106,28 @@ fn get_video_path(show: &str) -> String {
     "".to_string()
 }
 
+#[derive(Default)]
+#[derive(Debug)]
+struct Item {
+    url: String,
+    size: f32,
+}
+
+fn get_lowests(season: &String, total: u32, items: Vec<Item>) {
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Season {
+        #[serde(flatten)]
+        pub episodes: HashMap<String, String>,
+    }
+    let mut lowests: Vec<LinkEnrty> = Vec::new();
+    for episode in 1..=total {
+        lowests.insert()
+    }
+}
+
 
 #[tauri::command]
 async fn scrape(show: String) {
-    #[derive(Default)]
-    #[derive(Debug)]
-struct Item {
-        url: String,
-        size: f32,
-    }
     let json = get_json_data();
     let content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
     let show_info = &content[&show];
@@ -129,26 +143,39 @@ struct Item {
         let url_selector = Selector::parse("tr td a").unwrap();
         let size_selector = Selector::parse(".size").unwrap();
         let target_url = url.to_string().replace("https://a.111477.xyz", "");
+        let mut seen: HashSet<String> = HashSet::new();
+        let re = Regex::new(r"S\d+E\d+").unwrap();
+        let total_episodes: u32 = doc.select(&url_selector).filter(|x| {
+            if let Some(mat) = re.find(&x.inner_html()) {
+                seen.insert(mat.as_str().to_string())
+            } else { false }
+        }).count() as u32;
+        println!(
+            "Found {} episodes",
+            total_episodes
+        );
         let mut links: Vec<String> = doc.select(&url_selector)
             .filter_map(|x| x.value().attr("href"))
             .filter(|href| href.contains(&target_url))
             .map(|href| href.to_string())
             .collect();
         let sizes: Vec<f32> = doc.select(&size_selector)
-            .map(|x| { println!("Found: {:?}", x.inner_html()); x })
             .filter_map(|x| {
                 let html = x.inner_html();
 
                 if html.contains("GB") {
-                    Some(html.replace(" GB", "").parse::<f32>().map_err(|e| {println!("error with parsing: {}", e)}).unwrap())
+                    Some(html.replace(" GB", "").parse::<f32>().map_err(|e| { println!("error with parsing: {}", e) }).unwrap())
                 } else if html.contains("MB") {
-                    Some(html.parse::<f32>().map_err(|e| {println!("error with parsing: {}", e)}).unwrap() / 1024f32)
+                    Some(html.parse::<f32>().map_err(|e| { println!("error with parsing: {}", e) }).unwrap() / 1024f32)
                 } else {
                     None
                 }
             })
             .collect();
+
         let mut items: Vec<Item> = Vec::new();
+        let mut lowest_per_episode: HashMap<String, Item> = HashMap::new();
+
         println!("{:?} {}", links.len(), sizes.len());
         if links.len() != sizes.len() {
             println!("not the same removing first item");
@@ -159,12 +186,12 @@ struct Item {
             items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
         }
         println!("{}", format!("S{:0>2}E{}", season, episode));
-        let lowest = items.iter().filter(|item| item.url.contains(&format!("S{:0>2}E{}", season, episode))).min_by_key(|item|item.size).unwrap();
+        let lowest = get_lowests(season, total_episodes, items);
+        println!("lowest: {:?}", lowest);
     } else {
         println!("season not found");
     }
 }
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

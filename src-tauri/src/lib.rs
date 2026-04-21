@@ -1,4 +1,3 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -8,7 +7,7 @@ use scraper::{Html, Selector};
 use regex::Regex;
 
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct Show {
     path: String,
     episode: u32,
@@ -110,29 +109,27 @@ fn get_video_path(show: &str) -> String {
 #[derive(Debug)]
 struct Item {
     url: String,
-    size: f32,
+    size: u64,
 }
 
-fn get_lowests(season: &String, total: u32, items: Vec<Item>) {
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Season {
-        #[serde(flatten)]
-        pub episodes: HashMap<String, String>,
-    }
-    let mut lowests: Vec<LinkEnrty> = Vec::new();
+fn get_lowests(total: u32, items: Vec<Item>) -> HashMap<String, String> {
+    let mut lowests: HashMap<String, String> = HashMap::new();
     for episode in 1..=total {
-        lowests.insert()
+        let epi = format!("E{:0>2}", episode);
+        lowests.insert(format!("{}", episode), items.iter().filter(|item| Regex::new(&epi).unwrap().find(&*item.url).is_some())
+            .min_by_key(|p| p.size).unwrap().url.clone()
+        );
     }
+    lowests
 }
 
 
 #[tauri::command]
 async fn scrape(show: String) {
     let json = get_json_data();
-    let content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
+    let mut content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
     let show_info = &content[&show];
-    let season = &show_info.season;
-    let episode = &show_info.episode.to_string();
+    let season = format!("{:0>2}", (&show_info.season.parse::<u32>().unwrap() + 1).to_string());
     let url = &show_info.url;
     let response = reqwest::get(url).await.unwrap();
     let html = response.text().await.unwrap();
@@ -150,23 +147,21 @@ async fn scrape(show: String) {
                 seen.insert(mat.as_str().to_string())
             } else { false }
         }).count() as u32;
-        println!(
-            "Found {} episodes",
-            total_episodes
-        );
+
         let mut links: Vec<String> = doc.select(&url_selector)
             .filter_map(|x| x.value().attr("href"))
             .filter(|href| href.contains(&target_url))
             .map(|href| href.to_string())
             .collect();
-        let sizes: Vec<f32> = doc.select(&size_selector)
+        let sizes: Vec<u64> = doc.select(&size_selector)
             .filter_map(|x| {
                 let html = x.inner_html();
 
                 if html.contains("GB") {
-                    Some(html.replace(" GB", "").parse::<f32>().map_err(|e| { println!("error with parsing: {}", e) }).unwrap())
+                  Some(html.replace(" GB", "").parse::<f32>().map(|e| (e * 1024f32) as u64 ).unwrap())
+
                 } else if html.contains("MB") {
-                    Some(html.parse::<f32>().map_err(|e| { println!("error with parsing: {}", e) }).unwrap() / 1024f32)
+                    Some(html.parse::<f32>().map(|e| e as u64).unwrap())
                 } else {
                     None
                 }
@@ -174,7 +169,6 @@ async fn scrape(show: String) {
             .collect();
 
         let mut items: Vec<Item> = Vec::new();
-        let mut lowest_per_episode: HashMap<String, Item> = HashMap::new();
 
         println!("{:?} {}", links.len(), sizes.len());
         if links.len() != sizes.len() {
@@ -185,12 +179,18 @@ async fn scrape(show: String) {
             println!("{} {}", links.len(), sizes.len());
             items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
         }
-        println!("{}", format!("S{:0>2}E{}", season, episode));
-        let lowest = get_lowests(season, total_episodes, items);
-        println!("lowest: {:?}", lowest);
-    } else {
-        println!("season not found");
-    }
+        let lowest = get_lowests(total_episodes, items);
+
+        let mut new = content[&show].episode_links.clone();
+        new.insert(format!("{:0>2}", season.to_string()), lowest);
+        println!("{:#?}\n\n\n\n", new);
+        let Some(show_data) = content.get_mut(&show) else { println!("show not found"); return };
+        show_data.episode_links = new;
+        let new_json = serde_json::to_string_pretty(&content).unwrap();
+        print!("{:?}", new_json);
+        std::fs::write("shows.json", new_json).expect("Writing Failed");
+
+    } else { println!("season not found"); }
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

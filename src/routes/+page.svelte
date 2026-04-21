@@ -3,12 +3,14 @@
   import {getCurrentWindow} from "@tauri-apps/api/window";
   import { open } from '@tauri-apps/plugin-dialog';
   import {onMount} from "svelte";
+  import { listen } from "@tauri-apps/api/event";
 
 
   let show = $state("Community")
   let src = $state("")
   let dialog: HTMLDialogElement
   let options = $state([])
+  let output = $state("")
 
   function closeWindow() {
      const window = getCurrentWindow();
@@ -32,6 +34,10 @@
 
   })
 
+  const listener = listen("BE" , (event) => {
+   console.log(event.payload)
+  })
+
 </script>
 
 <div class="navwrap">
@@ -44,6 +50,7 @@
  <button onclick={() => getVideoPath(show)}>Get Video</button>
  <button onclick={() => downloadFile()}>run download</button>
  <button class="open-modal" onclick={() => dialog.showModal()}>Open Modal</button>
+ <h3>{output}</h3>
  <div data-tauri-drag-region></div>
  <button aria-label="close" onclick={closeWindow}>
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

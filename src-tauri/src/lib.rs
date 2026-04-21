@@ -4,7 +4,11 @@ use std::env;
 use std::io::Write;
 use futures_util::StreamExt;
 use scraper::{Html, Selector};
+use std::sync::OnceLock;
+use tauri::{AppHandle, Emitter};
 use regex::Regex;
+
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 
 #[derive(Deserialize, Serialize)]
@@ -20,6 +24,11 @@ struct Show {
 fn get_json_data() -> String {
     std::fs::read_to_string("shows.json").unwrap()
 }
+fn emit(data: String) {
+    if let Some(app_handle) = APP_HANDLE.get() {
+        app_handle.emit("BE", data).unwrap();
+    }
+}
 
 fn get_link(show: &str) -> String {
     let content = get_json_data();
@@ -27,6 +36,7 @@ fn get_link(show: &str) -> String {
     let show_info = &shows[show];
     let season = &show_info.season;
     let episode = &show_info.episode.to_string();
+    println!("{}", season);
     let episode_link = &show_info.episode_links[season][episode];
 
     if episode_link.contains("https://") {
@@ -45,7 +55,14 @@ async fn download(show: &str) -> Result<String, String>{
     //client logic
     println!("starting {:?}", file_name);
     let client = reqwest::Client::new();
+    println!("{:?}", client);
+    println!("{:?}", link);
     let response = client.get(&link).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Request failed: {}", response.status()));
+    } else {
+        println!("Sucsess: {:?}", response);
+    }
     let size = response.content_length().unwrap_or(0);
     let mut file = std::fs::File::create(&file_name).unwrap();
     let mut stream = response.bytes_stream();
@@ -54,15 +71,19 @@ async fn download(show: &str) -> Result<String, String>{
     if let Some(parent) = std::path::Path::new(&file_name).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-
+    let mut last_emit = std::time::Instant::now();
     let mut downloaded = 0;
     while let Some(chunk) = &stream.next().await {
         let chunk_error_handler = chunk.as_ref().map_err(|e| e.to_string())?;
         file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
 
         downloaded += chunk_error_handler.len();
-        let progress = downloaded as f64 / size as f64;
-        println!("{:.2}%", progress * 100.0);
+        let mut progress = downloaded as f64 / size as f64;
+        if last_emit.elapsed().as_millis() > 500 {
+            progress = downloaded as f64 / size as f64;
+            emit(format!("{:.2}%", progress * 100.0));
+            last_emit = std::time::Instant::now();
+        }
     }
 
     println!(

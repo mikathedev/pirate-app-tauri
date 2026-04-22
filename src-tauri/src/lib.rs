@@ -78,10 +78,10 @@ async fn download(show: &str) -> Result<String, String>{
         file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
 
         downloaded += chunk_error_handler.len();
-        let mut progress = downloaded as f64 / size as f64;
         if last_emit.elapsed().as_millis() > 500 {
-            progress = downloaded as f64 / size as f64;
+            let progress = downloaded as f64 / size as f64;
             emit(format!("{:.2}%", progress * 100.0));
+            println!("{:.2}%", progress * 100.0);
             last_emit = std::time::Instant::now();
         }
     }
@@ -219,6 +219,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape])
+        .setup(|app| {
+            APP_HANDLE.set(app.handle().clone()).unwrap();
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

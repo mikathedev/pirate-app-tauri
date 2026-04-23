@@ -74,5 +74,13 @@
         "9": "/tvs/Community/Season%205/Community%20%282009%29%20-%20S05E09%20-%20VCR%20Maintenance%20and%20Educational%20Publishing%20%5BWEBDL-2160p%5D%5BDV%20HDR10%5D%5B10bit%5D%5BHEVC%5D%5BEAC3%205.1%5D-BOUNTYTOOBIGTOIGNORE.mkv"
       }
     }
+  },
+  "LOK": {
+    "path": "F:/LOK",
+    "episode": 1,
+    "season": "01",
+    "url": "https://a.111477.xyz/tvs/The%20Legend%20of%20Korra/",
+    "episode links": {
+    }
   }
 }

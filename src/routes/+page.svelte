@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-  import {getCurrentWindow} from "@tauri-apps/api/window";
-  import { open } from '@tauri-apps/plugin-dialog';
-  import {onMount} from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+ import {convertFileSrc, invoke} from "@tauri-apps/api/core";
+ import {getCurrentWindow} from "@tauri-apps/api/window";
+ import {onMount} from "svelte";
+ import {listen} from "@tauri-apps/api/event";
 
 
-  let show = $state("Community")
+ let show = $state("Community")
   let src = $state("")
   let dialog: HTMLDialogElement
   let options = $state([])
   let output: unknown = $state("")
+  let downloaded: number = $state(0)
 
   function closeWindow() {
      const window = getCurrentWindow();
@@ -49,6 +49,15 @@
    output = event.payload
   })
 
+  listen("download-progress" , (event) => {
+   console.log(event.payload)
+   downloaded = event.payload as number
+
+   console.log(
+    `download progress: ${event.payload}%`
+   )
+  })
+
 </script>
 
 <div class="navwrap">
@@ -62,6 +71,7 @@
  <button onclick={() => downloadFile()}>run download</button>
  <button class="open-modal" onclick={() => {openDialog()}}>Open Modal</button>
  <h3>{output}</h3>
+ <progress value="{downloaded}"></progress>
  <div data-tauri-drag-region></div>
  <button aria-label="close" onclick={closeWindow}>
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

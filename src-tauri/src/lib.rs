@@ -22,7 +22,14 @@ struct Show {
 }
 
 fn get_json_data() -> String {
-    std::fs::read_to_string("shows.json").unwrap()
+    let path = std::env::current_exe()
+        .expect("cant get exe path")
+        .parent()
+        .expect("cant get exe dir")
+        .join("shows.json");
+
+    println!("{:?}", path);
+        std::fs::read_to_string(path).unwrap()
 }
 fn emit(data: String) {
     if let Some(app_handle) = APP_HANDLE.get() {
@@ -58,19 +65,21 @@ async fn download(show: &str) -> Result<String, String>{
     println!("{:?}", client);
     println!("{:?}", link);
     let response = client.get(&link).send().await.map_err(|e| e.to_string())?;
+    println!("{:?}", response);
     if !response.status().is_success() {
         return Err(format!("Request failed: {}", response.status()));
     } else {
         println!("Sucsess: {:?}", response);
     }
     let size = response.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(&file_name).unwrap();
     let mut stream = response.bytes_stream();
     println!("Downloading {}...", file_name);
 
     if let Some(parent) = std::path::Path::new(&file_name).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+
+    let mut file = std::fs::File::create(&file_name).unwrap();
     let mut last_emit = std::time::Instant::now();
     let mut downloaded = 0;
     while let Some(chunk) = &stream.next().await {
@@ -78,9 +87,9 @@ async fn download(show: &str) -> Result<String, String>{
         file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
 
         downloaded += chunk_error_handler.len();
-        if last_emit.elapsed().as_millis() > 500 {
+        if last_emit.elapsed().as_millis() > 5000 {
             let progress = downloaded as f64 / size as f64;
-            emit(format!("{:.2}%", progress * 100.0));
+            emit(format!("{:.2}", progress * 100.0));
             println!("{:.2}%", progress * 100.0);
             last_emit = std::time::Instant::now();
         }
@@ -209,12 +218,22 @@ async fn scrape(show: String) {
         show_data.episode_links = new;
         let new_json = serde_json::to_string_pretty(&content).unwrap();
         print!("{:?}", new_json);
-        std::fs::write("shows.json", new_json).expect("Writing Failed");
-
+        let path = std::env::current_exe()
+            .expect("cant get exe path")
+            .parent()
+            .expect("cant get exe dir")
+            .join("shows.json");
+        std::fs::write(&path, new_json).expect("Writing Failed");
     } else { println!("season not found"); }
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("{}", info);
+        std::fs::write("crash.log", &msg).ok();
+        eprintln!("{}", msg);
+    }));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

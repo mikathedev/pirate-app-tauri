@@ -59,9 +59,9 @@ async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
     let show = &shows[showstr];
     let mut season: String = show.season.to_string();
     let mut episode: u32 = show.episode;
-    if episode+ offset > show.episode_links[&show.season].len() as u32 {
+    if episode + offset > show.episode_links[&show.season].len() as u32 {
         println!("next episode in next season");
-        scrape(showstr.to_string()).await;
+        scrape(showstr.to_string(), false).await;
         let new = &format!("{:0>2}", &season.clone().parse::<u32>().unwrap() + 1);
         season = new.clone();
         episode = 1;
@@ -174,11 +174,11 @@ fn get_lowests(total: u32, items: Vec<Item>) -> HashMap<String, String> {
 
 
 #[tauri::command]
-async fn scrape(show: String) {
+async fn scrape(show: String, first: bool) {
     let json = get_json_data();
     let mut content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
     let show_info = &content[&show];
-    let season = format!("{:0>2}", (&show_info.season.parse::<u32>().unwrap() + 1).to_string());
+    let season = if first {format!("{:0>2}", &show_info.season)} else { format!("{:0>2}", (&show_info.season.parse::<u32>().unwrap() + 1).to_string()) };
     let url = &show_info.url;
     let response = reqwest::get(url).await.unwrap();
     let html = response.text().await.unwrap();
@@ -202,15 +202,14 @@ async fn scrape(show: String) {
             .filter(|href| href.contains(&target_url))
             .map(|href| href.to_string())
             .collect();
+        print!("{:?}", doc.select(&size_selector));
         let sizes: Vec<u64> = doc.select(&size_selector)
             .filter_map(|x| {
                 let html = x.inner_html();
-
                 if html.contains("GB") {
                   Some(html.replace(" GB", "").parse::<f32>().map(|e| (e * 1024f32) as u64 ).unwrap())
-
                 } else if html.contains("MB") {
-                    Some(html.parse::<f32>().map(|e| e as u64).unwrap())
+                    Some(html.replace(" MB", "").parse::<f32>().map(|e| e as u64).unwrap())
                 } else {
                     None
                 }
@@ -245,6 +244,30 @@ async fn scrape(show: String) {
         std::fs::write(&path, new_json).expect("Writing Failed");
     } else { println!("season not found"); }
 }
+
+#[tauri::command]
+async fn add_show(name: String, url: String, path: String) -> bool {
+    let json = get_json_data();
+    let mut content: HashMap<String, Show> = serde_json::from_str(&json).map_err(|e| return e.to_string()).unwrap_or(HashMap::new());
+    let new = Show {
+        path,
+        episode: 1,
+        season: "01".to_string(),
+        url,
+        episode_links: HashMap::new()
+    };
+    content.insert(name.clone(), new);
+    let new_json = serde_json::to_string_pretty(&content).unwrap();
+    let path = std::env::current_exe()
+        .expect("cant get exe path")
+        .parent()
+        .expect("cant get exe dir")
+        .join("shows.json");
+    std::fs::write(&path, new_json).expect("Writing Failed");
+    scrape(name, true).await;
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     std::panic::set_hook(Box::new(|info| {
@@ -256,7 +279,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape])
+        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape, add_show])
         .setup(|app| {
             APP_HANDLE.set(app.handle().clone()).unwrap();
             Ok(())

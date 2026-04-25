@@ -2,10 +2,11 @@
  import {convertFileSrc, invoke} from "@tauri-apps/api/core";
  import {getCurrentWindow} from "@tauri-apps/api/window";
  import {onMount} from "svelte";
+ import {open} from "@tauri-apps/plugin-dialog";
  import {listen} from "@tauri-apps/api/event";
 
 
- let show = $state("Community")
+ let show = $state("")
   let src = $state("")
   let dialog: HTMLDialogElement
   let options = $state([])
@@ -30,13 +31,39 @@
    }, 3000)
   }
 
+  //add show variables
+ let urlIn = $state("")
+ let nameIn = $state("")
+ let pathIn = $state("")
+
+ async function openPathF() {
+  const path = await open({
+   directory: true,
+   multiple: false
+  })
+  if (path != null) {
+   pathIn = path
+  }
+ }
+
+ async function addShow() {
+  if (!urlIn.includes("https://")) {
+   urlIn = "https://" + urlIn
+  }
+  dialog.close()
+  const status = await invoke("add_show", {name: nameIn, path: pathIn, url: urlIn})
+  if (status == true) {
+   notify("Add Show Update", "success adding show")
+  } else if (typeof status == "string") { notify("Add Show Update", "error adding show: " + status) }
+  return status
+ }
   async function get_options() {
    options = await invoke("get_options")
    console.log(options)
   }
 
   function downloadFile() {
-   invoke("download", { show: show }).then((res) => {console.log(res)})
+   invoke("download", { showstr: show, offset: 0 }).then((res) => {console.log(res)})
   }
   async function getVideoPath(show: string) {
    const file: string = await invoke("get_video_path", { show: show })
@@ -112,12 +139,15 @@
 <div class="notification" style="opacity: {Nopacity};"><h3>{Ntitle}</h3><p>{Nmessage}</p></div>
 
 <dialog bind:this={dialog}>
- <form>
+ <form onsubmit={addShow}>
   <h1>Add Show</h1>
-  <button type="button" onclick={() => invoke("scrape", { show: show }).then((res) => {console.log(res)})}>scrape</button>
-  <div><label for="#name">Show Name</label> <input type="text" id="name" name="name" /></div>
-  <div><label for="#name">Show Name</label> <input type="text" id="name" name="name" /> <button type="button">Open</button></div>
-  <div><label for="#name">Show Name</label> <input type="text" id="name" name="name" /></div>
+  <section>
+   <button type="button" onclick={() => invoke("scrape", { show: show, first: true }).then((res) => {console.log(res)})}>scrape</button>
+   <div><label for="#name">Show Name:  </label> <input required bind:value={nameIn} type="text" id="name" name="name" /></div>
+   <div><label for="#path">Path:  </label> <input required bind:value={pathIn} type="text" id="path" name="path" /> <button tabindex="-1" onclick={openPathF} type="button">Open</button></div>
+   <div><label for="#url">Url:  </label> <input required bind:value={urlIn} type="url" id="url" name="url" /></div>
+   <button type="submit">Add</button>
+  </section>
  </form>
  <button type="button" id="close" onclick={() => {closeDialog()}}>Close</button>
 </dialog>
@@ -294,26 +324,41 @@
  form {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px;
   width: 100%;
   justify-content: center;
   align-items: center;
  }
 
- form div {
-  display: flex;
-  flex-direction: row;
+ form section div {
+  align-content: center;
+  width: 80%;
   gap: 10px;
   height: 30px;
-
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+ }
+ form section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 100%;
+  justify-content: center;
+  align-items: center;
  }
 
-form label {
- margin-top: auto;
- margin-bottom: auto;
+ form section div button {
+  max-width: 30%;
+  margin-left: 20px;
+ }
+
+form section label {
+ margin: auto 20px auto 0;
+ white-space: nowrap;
 }
 
-form input {
+form section input {
  background-color: #131313;
  border: 2px solid #FF6331;
  color: white;
@@ -324,7 +369,7 @@ form input {
  transition: all 0.2s ease-in-out;
 }
 
- form button {
+ form section button {
   max-width: 40%;
   width: 100%;
  }

@@ -72,6 +72,10 @@
    await videoele.play()
   }
 
+  function ended() {
+   
+  }
+
   onMount((): void =>{
    get_options()
   })
@@ -133,7 +137,7 @@
 </div>
 
 {#key src}
- <video bind:this={videoele} src={src} controls style="width:100%" onended={() => console.log('video ended!')}
+ <video bind:this={videoele} src={src} controls style="width:100%" onended={ended}
  ><track kind="captions" src=""></video>
 {/key}
 <div class="notification" style="opacity: {Nopacity};"><h3>{Ntitle}</h3><p>{Nmessage}</p></div>

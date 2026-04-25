@@ -173,76 +173,99 @@ fn get_lowests(total: u32, items: Vec<Item>) -> HashMap<String, String> {
 }
 
 
+// CHANGED: extracted season calculation
+fn get_season(show_info: &Show, first: bool) -> String {
+    if first {
+        format!("{:0>2}", &show_info.season)
+    } else {
+        format!("{:0>2}", show_info.season.parse::<u32>().unwrap() + 1)
+    }
+}
+
+// CHANGED: extracted HTML fetching
+async fn fetch_season_html(url: &str, season: &str) -> String {
+    reqwest::get(format!("{}Season%20{}", url, season.parse::<u32>().unwrap()))
+        .await.unwrap().text().await.unwrap()
+}
+
+// CHANGED: extracted link/size parsing
+fn parse_items(doc: &Html, target_url: &str) -> (Vec<String>, Vec<u64>) {
+    let url_selector = Selector::parse("tr td a").unwrap();
+    let size_selector = Selector::parse(".size").unwrap();
+
+    let links: Vec<String> = doc.select(&url_selector)
+        .filter_map(|x| x.value().attr("href"))
+        .filter(|href| href.contains(target_url))
+        .map(|href| href.to_string())
+        .collect();
+
+    let sizes: Vec<u64> = doc.select(&size_selector)
+        .filter_map(|x| {
+            let html = x.inner_html();
+            if html.contains("GB") {
+                Some(html.replace(" GB", "").parse::<f32>().map(|e| (e * 1024f32) as u64).unwrap())
+            } else if html.contains("MB") {
+                Some(html.replace(" MB", "").parse::<f32>().map(|e| e as u64).unwrap())
+            } else { None }
+        })
+        .collect();
+
+    (links, sizes)
+}
+
+// CHANGED: extracted episode counting
+fn count_episodes(doc: &Html) -> u32 {
+    let url_selector = Selector::parse("tr td a").unwrap();
+    let re = Regex::new(r"S\d+E\d+").unwrap();
+    let mut seen: HashSet<String> = HashSet::new();
+    doc.select(&url_selector).filter(|x| {
+        if let Some(mat) = re.find(&x.inner_html()) {
+            seen.insert(mat.as_str().to_string())
+        } else { false }
+    }).count() as u32
+}
+
+// CHANGED: extracted items building
+fn build_items(mut links: Vec<String>, sizes: Vec<u64>) -> Vec<Item> {
+    if links.len() != sizes.len() {
+        println!("not the same, removing first item");
+        links.remove(0);
+    }
+    links.into_iter().zip(sizes).map(|(url, size)| Item { url, size }).collect()
+}
+
+// CHANGED: main command is now much simpler
 #[tauri::command]
 async fn scrape(show: String, first: bool) {
     let json = get_json_data();
     let mut content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
-    let show_info = &content[&show];
-    let season = if first {format!("{:0>2}", &show_info.season)} else { format!("{:0>2}", (&show_info.season.parse::<u32>().unwrap() + 1).to_string()) };
-    let url = &show_info.url;
-    let response = reqwest::get(url).await.unwrap();
-    let html = response.text().await.unwrap();
-    if html.contains(&season.parse::<u32>().unwrap().to_string()) {
-        println!("found season");
-        let episodes = reqwest::get(format!("{}Season%20{}", url, &season.parse::<u32>().unwrap().to_string())).await.unwrap().text().await.unwrap();
-        let doc = Html::parse_document(&episodes.as_str());
-        let url_selector = Selector::parse("tr td a").unwrap();
-        let size_selector = Selector::parse(".size").unwrap();
-        let target_url = url.to_string().replace("https://a.111477.xyz", "");
-        let mut seen: HashSet<String> = HashSet::new();
-        let re = Regex::new(r"S\d+E\d+").unwrap();
-        let total_episodes: u32 = doc.select(&url_selector).filter(|x| {
-            if let Some(mat) = re.find(&x.inner_html()) {
-                seen.insert(mat.as_str().to_string())
-            } else { false }
-        }).count() as u32;
+    let season = get_season(&content[&show], first);
+    let url = content[&show].url.clone();
 
-        let mut links: Vec<String> = doc.select(&url_selector)
-            .filter_map(|x| x.value().attr("href"))
-            .filter(|href| href.contains(&target_url))
-            .map(|href| href.to_string())
-            .collect();
-        print!("{:?}", doc.select(&size_selector));
-        let sizes: Vec<u64> = doc.select(&size_selector)
-            .filter_map(|x| {
-                let html = x.inner_html();
-                if html.contains("GB") {
-                  Some(html.replace(" GB", "").parse::<f32>().map(|e| (e * 1024f32) as u64 ).unwrap())
-                } else if html.contains("MB") {
-                    Some(html.replace(" MB", "").parse::<f32>().map(|e| e as u64).unwrap())
-                } else {
-                    None
-                }
-            })
-            .collect();
+    let index_html = reqwest::get(&url).await.unwrap().text().await.unwrap();
+    if !index_html.contains(&season.parse::<u32>().unwrap().to_string()) {
+        println!("season not found"); return;
+    }
 
-        let mut items: Vec<Item> = Vec::new();
+    println!("found season");
+    let episodes_html = fetch_season_html(&url, &season).await;
+    let doc = Html::parse_document(&episodes_html);
+    let target_url = url.replace("https://a.111477.xyz", "");
 
-        println!("{:?} {}", links.len(), sizes.len());
-        if links.len() != sizes.len() {
-            println!("not the same removing first item");
-            links.remove(0);
-            items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
-        } else if links.len() == sizes.len() {
-            println!("{} {}", links.len(), sizes.len());
-            items = links.into_iter().zip(sizes.into_iter()).map(|(url, size)| Item { url, size }).collect();
-        }
-        let lowest = get_lowests(total_episodes, items);
+    let total_episodes = count_episodes(&doc);
+    let (links, sizes) = parse_items(&doc, &target_url);
+    let items = build_items(links, sizes);
+    let lowest = get_lowests(total_episodes, items);
 
-        let mut new = content[&show].episode_links.clone();
-        new.insert(format!("{:0>2}", season.to_string()), lowest);
-        println!("{:#?}\n\n\n\n", new);
-        let Some(show_data) = content.get_mut(&show) else { println!("show not found"); return };
-        show_data.episode_links = new;
-        let new_json = serde_json::to_string_pretty(&content).unwrap();
-        print!("{:?}", new_json);
-        let path = std::env::current_exe()
-            .expect("cant get exe path")
-            .parent()
-            .expect("cant get exe dir")
-            .join("shows.json");
-        std::fs::write(&path, new_json).expect("Writing Failed");
-    } else { println!("season not found"); }
+    let mut new = content[&show].episode_links.clone();
+    new.insert(format!("{:0>2}", season), lowest);
+
+    let Some(show_data) = content.get_mut(&show) else { println!("show not found"); return };
+    show_data.episode_links = new;
+
+    let new_json = serde_json::to_string_pretty(&content).unwrap();
+    let path = std::env::current_exe().unwrap().parent().unwrap().join("shows.json");
+    std::fs::write(&path, new_json).expect("Writing Failed");
 }
 
 #[tauri::command]

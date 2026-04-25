@@ -31,20 +31,20 @@ fn get_json_data() -> String {
     println!("{:?}", path);
         std::fs::read_to_string(path).unwrap()
 }
-fn emit(data: String) {
+fn emit(data: String, event_type: &str) {
     if let Some(app_handle) = APP_HANDLE.get() {
-        app_handle.emit("BE", data).unwrap();
+        app_handle.emit(event_type, data).unwrap();
     }
 }
 
-fn get_link(show: &str) -> String {
+fn get_link(show: &str, get_first: bool) -> String {
     let content = get_json_data();
     let shows: HashMap<String, Show> = serde_json::from_str(&content).unwrap();
     let show_info = &shows[show];
     let season = &show_info.season;
-    let episode = &show_info.episode.to_string();
+    let episode = if get_first { 1.to_string() } else { show_info.episode.to_string() };
     println!("{}", season);
-    let episode_link = &show_info.episode_links[season][episode];
+    let episode_link = &show_info.episode_links[season][&episode];
 
     if episode_link.contains("https://") {
         episode_link.to_string()
@@ -53,55 +53,74 @@ fn get_link(show: &str) -> String {
     }
 }
 #[tauri::command]
-async fn download(show: &str) -> Result<String, String>{
-    let link = get_link(show);
+async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
     let json_data = get_json_data();
     let shows: HashMap<String, Show> = serde_json::from_str(&json_data).unwrap();
-    let show = &shows[show];
-    let file_name = format!("{}/{}{}.{}", show.path, show.season, format!("{:0>2}", show.episode.to_string()), link.split(".").last().unwrap().to_string());
+    let show = &shows[showstr];
+    let mut season: String = show.season.to_string();
+    let mut episode: u32 = show.episode;
+    if episode+ offset > show.episode_links[&show.season].len() as u32 {
+        println!("next episode in next season");
+        scrape(showstr.to_string()).await;
+        let new = &format!("{:0>2}", &season.clone().parse::<u32>().unwrap() + 1);
+        season = new.clone();
+        episode = 1;
+        offset = 0;
+    }
+    let link = get_link(showstr, true);
+    let file_name = format!("{}/{}{}.{}", show.path, season, format!("{:0>2}", (episode + offset).to_string()), link.split(".").last().unwrap().to_string());
     //client logic
-    println!("starting {:?}", file_name);
-    let client = reqwest::Client::new();
-    println!("{:?}", client);
-    println!("{:?}", link);
-    let response = client.get(&link).send().await.map_err(|e| e.to_string())?;
-    println!("{:?}", response);
-    if !response.status().is_success() {
-        return Err(format!("Request failed: {}", response.status()));
-    } else {
-        println!("Sucsess: {:?}", response);
-    }
-    let size = response.content_length().unwrap_or(0);
-    let mut stream = response.bytes_stream();
-    println!("Downloading {}...", file_name);
-
-    if let Some(parent) = std::path::Path::new(&file_name).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    let mut file = std::fs::File::create(&file_name).unwrap();
-    let mut last_emit = std::time::Instant::now();
-    let mut downloaded = 0;
-    while let Some(chunk) = &stream.next().await {
-        let chunk_error_handler = chunk.as_ref().map_err(|e| e.to_string())?;
-        file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
-
-        downloaded += chunk_error_handler.len();
-        if last_emit.elapsed().as_millis() > 5000 {
-            let progress = downloaded as f64 / size as f64;
-            emit(format!("{:.2}", progress * 100.0));
-            println!("{:.2}%", progress * 100.0);
-            last_emit = std::time::Instant::now();
+    if !std::path::Path::new(&file_name).exists() {
+        println!("starting {:?}", file_name);
+        let client = reqwest::Client::new();
+        println!("{:?}", client);
+        println!("{:?}", link);
+        let response = client.get(&link).send().await.map_err(|e| e.to_string())?;
+        println!("{:?}", response);
+        if !response.status().is_success() {
+            return Err(format!("Request failed: {}", response.status()));
+        } else {
+            println!("Sucsess: {:?}", response);
         }
-    }
+        let size = response.content_length().unwrap_or(0);
+        let mut stream = response.bytes_stream();
+        println!("Downloading {}...", file_name);
 
-    println!(
-        "Downloaded {}",
-        file_name
-    );
+        if let Some(parent) = std::path::Path::new(&file_name).parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        let mut file = std::fs::File::create(&file_name).unwrap();
+        let mut last_emit = std::time::Instant::now();
+        let mut downloaded = 0;
+        while let Some(chunk) = &stream.next().await {
+            let chunk_error_handler = chunk.as_ref().map_err(|e| e.to_string())?;
+            file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
+
+            downloaded += chunk_error_handler.len();
+            if last_emit.elapsed().as_millis() > 5000 {
+                let progress = downloaded as f64 / size as f64;
+                emit(format!("{:.2}", progress * 100.0), "download");
+                println!("{:.2}%", progress * 100.0);
+                last_emit = std::time::Instant::now();
+            }
+        }
+
+        println!(
+            "Downloaded {} converting it now",
+            file_name
+        );
+        emit("Download Complete".to_string(), "downloadFinnished");
+
+        let new_file_name: String = file_name.split_once(".").unwrap().0.to_string() + ".mp4";
+
+        let output = std::process::Command::new(format!("ffmpeg -i {} -c:v libx264 -preset slow -crf 22 -c:a aac {}", file_name, new_file_name))
+            .output()
+            .expect("failed to execute process");
+        println!("{:?}", output);
+    } else { println!("file already exists"); }
 
     Ok(file_name)
-
 }
 
 #[tauri::command]

@@ -11,11 +11,25 @@
   let options = $state([])
   let output: unknown = $state("")
   let downloaded: number = $state(0)
+ let videoele: HTMLVideoElement
 
   function closeWindow() {
      const window = getCurrentWindow();
      window.close();
   }
+
+  let Nopacity = $state(0)
+  let Ntitle = $state("")
+  let Nmessage = $state("")
+  function notify(title: string, message: string) {
+   Ntitle = title
+   Nmessage = message
+   Nopacity = 1
+   setTimeout(() => {
+    Nopacity = 0
+   }, 3000)
+  }
+
   async function get_options() {
    options = await invoke("get_options")
    console.log(options)
@@ -27,11 +41,12 @@
   async function getVideoPath(show: string) {
    const file: string = await invoke("get_video_path", { show: show })
    src = convertFileSrc(file)
+   videoele.load()
+   await videoele.play()
   }
 
   onMount((): void =>{
    get_options()
-
   })
 
   function openDialog() {
@@ -49,14 +64,17 @@
    output = event.payload
   })
 
-  listen("download-progress" , (event) => {
+  listen("download" , (event) => {
    console.log(event.payload)
    downloaded = event.payload as number
-
    console.log(
     `download progress: ${event.payload}%`
    )
   })
+ listen("downloadFinished", event => {
+  notify("Download Progress", event.payload + "%")
+  
+ })
 
 </script>
 
@@ -69,9 +87,9 @@
  </select>
  <button onclick={() => getVideoPath(show)}>Get Video</button>
  <button onclick={() => downloadFile()}>run download</button>
- <button class="open-modal" onclick={() => {openDialog()}}>Open Modal</button>
+ <button class="open-modal" onclick={() => {openDialog()}}>Add Show</button>
  <h3>{output}</h3>
- <progress value="{downloaded}"></progress>
+ <progress max="100" value="{downloaded}"></progress>
  <div data-tauri-drag-region></div>
  <button aria-label="close" onclick={closeWindow}>
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -88,15 +106,18 @@
 </div>
 
 {#key src}
- <video src={src} controls style="width:100%" onended={() => console.log('video ended!')}
+ <video bind:this={videoele} src={src} controls style="width:100%" onended={() => console.log('video ended!')}
  ><track kind="captions" src=""></video>
 {/key}
-
+<div class="notification" style="opacity: {Nopacity};"><h3>{Ntitle}</h3><p>{Nmessage}</p></div>
 
 <dialog bind:this={dialog}>
  <form>
   <h1>Add Show</h1>
   <button type="button" onclick={() => invoke("scrape", { show: show }).then((res) => {console.log(res)})}>scrape</button>
+  <div><label for="#name">Show Name</label> <input type="text" id="name" name="name" /></div>
+  <div><label for="#name">Show Name</label> <input type="text" id="name" name="name" /> <button type="button">Open</button></div>
+  <div><label for="#name">Show Name</label> <input type="text" id="name" name="name" /></div>
  </form>
  <button type="button" id="close" onclick={() => {closeDialog()}}>Close</button>
 </dialog>
@@ -170,6 +191,30 @@
   border-radius: 10px;
  }
 
+ .notification {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background-color: #FF6331;
+  color: white;
+  padding: 7px;
+  border-radius: 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  transition: opacity 0.1s ease-in-out;
+  text-align: right;
+ }
+
+.notification h3 {
+  margin: 0;
+  padding: 0;
+}
+
+.notification p {
+ margin: 0;
+ padding: 0;
+}
+
  /* Styling for the dropdown / select menu */
  select {
   background-color: #FF6331;
@@ -196,6 +241,25 @@
   color: white;
  }
 
+ progress {
+  width: 10vw;
+  height: 40px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: none;
+
+ }
+
+ progress::-webkit-progress-value {
+  background-color: #fb6b3d;
+  border-radius: 10px;
+ }
+
+ progress::-webkit-progress-bar {
+  background-color: #151414;
+  border-radius: 10px;
+ }
 
  /* Styling for the video container */
  video {
@@ -231,9 +295,34 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
   justify-content: center;
   align-items: center;
  }
+
+ form div {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  height: 30px;
+
+ }
+
+form label {
+ margin-top: auto;
+ margin-bottom: auto;
+}
+
+form input {
+ background-color: #131313;
+ border: 2px solid #FF6331;
+ color: white;
+ padding: 6px 12px;
+ font-size: 16px;
+ border-radius: 10px;
+ outline: none;
+ transition: all 0.2s ease-in-out;
+}
 
  form button {
   max-width: 40%;

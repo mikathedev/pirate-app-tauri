@@ -21,15 +21,14 @@ struct Show {
     episode_links: HashMap<String, HashMap<String, String>>,
 }
 
-fn get_json_data() -> String {
+fn get_json_data() -> HashMap<String, Show> {
     let path = std::env::current_exe()
         .expect("cant get exe path")
         .parent()
         .expect("cant get exe dir")
         .join("shows.json");
-
-    println!("{:?}", path);
-        std::fs::read_to_string(path).unwrap()
+    let shows: HashMap<String, Show> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    shows
 }
 fn emit(data: String, event_type: &str) {
     if let Some(app_handle) = APP_HANDLE.get() {
@@ -38,8 +37,7 @@ fn emit(data: String, event_type: &str) {
 }
 
 fn get_link(show: &str, get_first: bool) -> String {
-    let content = get_json_data();
-    let shows: HashMap<String, Show> = serde_json::from_str(&content).unwrap();
+    let shows: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
     let season = &show_info.season;
     let episode = if get_first { 1.to_string() } else { show_info.episode.to_string() };
@@ -54,8 +52,7 @@ fn get_link(show: &str, get_first: bool) -> String {
 }
 #[tauri::command]
 async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
-    let json_data = get_json_data();
-    let shows: HashMap<String, Show> = serde_json::from_str(&json_data).unwrap();
+    let shows: HashMap<String, Show> = get_json_data();
     let show = &shows[showstr];
     let mut season: String = show.season.to_string();
     let mut episode: u32 = show.episode;
@@ -125,8 +122,7 @@ async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
 
 #[tauri::command]
 fn get_options() -> Vec<String> {
-    let content = get_json_data();
-    let shows: HashMap<String, Show> = serde_json::from_str(&content).unwrap();
+    let shows: HashMap<String, Show> = get_json_data();
     let mut options: Vec<String> = Vec::new();
     for (show, _) in shows.iter() {
         options.push(show.to_string());
@@ -136,8 +132,7 @@ fn get_options() -> Vec<String> {
 
 #[tauri::command]
 fn get_video_path(show: &str) -> String {
-    let content = get_json_data();
-    let shows: HashMap<String, Show> = serde_json::from_str(&content).unwrap();
+    let shows: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
     let season = &show_info.season;
     let episode = &show_info.episode.to_string();
@@ -172,8 +167,6 @@ fn get_lowests(total: u32, items: Vec<Item>) -> HashMap<String, String> {
     lowests
 }
 
-
-// CHANGED: extracted season calculation
 fn get_season(show_info: &Show, first: bool) -> String {
     if first {
         format!("{:0>2}", &show_info.season)
@@ -182,13 +175,11 @@ fn get_season(show_info: &Show, first: bool) -> String {
     }
 }
 
-// CHANGED: extracted HTML fetching
 async fn fetch_season_html(url: &str, season: &str) -> String {
     reqwest::get(format!("{}Season%20{}", url, season.parse::<u32>().unwrap()))
         .await.unwrap().text().await.unwrap()
 }
 
-// CHANGED: extracted link/size parsing
 fn parse_items(doc: &Html, target_url: &str) -> (Vec<String>, Vec<u64>) {
     let url_selector = Selector::parse("tr td a").unwrap();
     let size_selector = Selector::parse(".size").unwrap();
@@ -213,7 +204,6 @@ fn parse_items(doc: &Html, target_url: &str) -> (Vec<String>, Vec<u64>) {
     (links, sizes)
 }
 
-// CHANGED: extracted episode counting
 fn count_episodes(doc: &Html) -> u32 {
     let url_selector = Selector::parse("tr td a").unwrap();
     let re = Regex::new(r"S\d+E\d+").unwrap();
@@ -225,7 +215,6 @@ fn count_episodes(doc: &Html) -> u32 {
     }).count() as u32
 }
 
-// CHANGED: extracted items building
 fn build_items(mut links: Vec<String>, sizes: Vec<u64>) -> Vec<Item> {
     if links.len() != sizes.len() {
         println!("not the same, removing first item");
@@ -234,11 +223,9 @@ fn build_items(mut links: Vec<String>, sizes: Vec<u64>) -> Vec<Item> {
     links.into_iter().zip(sizes).map(|(url, size)| Item { url, size }).collect()
 }
 
-// CHANGED: main command is now much simpler
 #[tauri::command]
 async fn scrape(show: String, first: bool) {
-    let json = get_json_data();
-    let mut content: HashMap<String, Show> = serde_json::from_str(&json).unwrap();
+    let mut content: HashMap<String, Show> = get_json_data();
     let season = get_season(&content[&show], first);
     let url = content[&show].url.clone();
 
@@ -270,8 +257,7 @@ async fn scrape(show: String, first: bool) {
 
 #[tauri::command]
 async fn add_show(name: String, url: String, path: String) -> bool {
-    let json = get_json_data();
-    let mut content: HashMap<String, Show> = serde_json::from_str(&json).map_err(|e| return e.to_string()).unwrap_or(HashMap::new());
+    let mut content: HashMap<String, Show> = get_json_data();
     let new = Show {
         path,
         episode: 1,
@@ -290,11 +276,27 @@ async fn add_show(name: String, url: String, path: String) -> bool {
     scrape(name, true).await;
     true
 }
+#[tauri::command]
+fn ended(show: &str) {
+    let shows: HashMap<String, Show> = get_json_data();
+    let show_info = &shows[show];
+    let file_name = format!("{}{:0>2}", show_info.season, (show_info.episode + 1));
+    let re = Regex::new(&file_name).unwrap();
+    let episodes: Vec<_> = std::fs::read_dir(&show_info.path).unwrap()
+        .filter(|x| re.is_match(x.as_ref().unwrap().path().display().to_string().as_str())).collect();
+    println!("looking for {} \n {:#?}", file_name, episodes);
+    if episodes.len() != 0 {
+        
+    }
+
+}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("{}", info);
+        emit(msg.clone(), "ERROR");
         std::fs::write("crash.log", &msg).ok();
         eprintln!("{}", msg);
     }));
@@ -302,7 +304,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape, add_show])
+        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape, add_show, ended])
         .setup(|app| {
             APP_HANDLE.set(app.handle().clone()).unwrap();
             Ok(())

@@ -59,6 +59,7 @@
  }
   async function get_options() {
    options = await invoke("get_options")
+   show = options[0]
    console.log(options)
   }
 
@@ -70,10 +71,6 @@
    src = convertFileSrc(file)
    videoele.load()
    await videoele.play()
-  }
-
-  function ended() {
-   
   }
 
   onMount((): void =>{
@@ -137,7 +134,7 @@
 </div>
 
 {#key src}
- <video bind:this={videoele} src={src} controls style="width:100%" onended={ended}
+ <video bind:this={videoele} src={src} controls style="width:100%" onended={() => {invoke("ended", {show: show})}}
  ><track kind="captions" src=""></video>
 {/key}
 <div class="notification" style="opacity: {Nopacity};"><h3>{Ntitle}</h3><p>{Nmessage}</p></div>
@@ -154,6 +151,7 @@
   </section>
  </form>
  <button type="button" id="close" onclick={() => {closeDialog()}}>Close</button>
+ <button onclick={() => invoke("ended", {show: show})}>ended</button>
 </dialog>
 
 <style>

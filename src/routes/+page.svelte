@@ -102,6 +102,7 @@
  listen("NextEpisode" , (event) => {
   console.log(event.payload)
   src = convertFileSrc(event.payload as string)
+  notify("Next Episode", "next episode: " + event.payload)
  })
  listen("downloadFinished", event => {
   notify("Download Progress", event.payload + "%")

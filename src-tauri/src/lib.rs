@@ -37,24 +37,6 @@ fn emit(data: String, event_type: &str) {
     }
 }
 
-fn get_link(show: &str, offset: u32, get_first: bool) -> String {
-    let shows: HashMap<String, Show> = get_json_data();
-    let show_info = &shows[show];
-    let season = &show_info.season;
-    let episode = if get_first {
-        1.to_string()
-    } else {
-        (show_info.episode + offset).to_string()
-    };
-    println!("{}", season);
-    let episode_link = &show_info.episode_links[season][&episode];
-
-    if episode_link.contains("https://") {
-        episode_link.to_string()
-    } else {
-        format!("https://a.111477.xyz{}", episode_link)
-    }
-}
 #[tauri::command]
 async fn download(showstr: &str) -> Result<String, String> {
     let mut shows: HashMap<String, Show> = get_json_data();
@@ -365,15 +347,18 @@ async fn add_show(name: String, url: String, path: String) -> bool {
 fn ended(show: &str) {
     let shows: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
-    let file_name = format!("{}{:0>2}", show_info.season, (show_info.episode + 1));
+    let file_name = format!("{}{:0>2}", show_info.season, show_info.episode + 1);
     let re = Regex::new(&file_name).unwrap();
-    let episodes = std::fs::read_dir(&show_info.path)
-        .map(|x| x.map(|y| y.unwrap().path().display().to_string()));
+    let episodes = std::fs::read_dir(&show_info.path).expect("cant read dir")
+        .map(|x| x.unwrap().path().display().to_string())
+        .collect::<Vec<_>>();
 
     println!("looking for {} \n {:#?}", file_name, episodes);
-    if episodes.iter().len() != 0 {
-        emit(episodes.unwrap().next().unwrap(), "NextEpisode");
-        download(show);
+    for ep in episodes {
+        if re.is_match(&*ep) {
+            emit(ep, "NextEpisode");
+            download(show);
+        }
     }
 }
 

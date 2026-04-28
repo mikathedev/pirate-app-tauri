@@ -1,20 +1,20 @@
-use std::collections::{HashMap, HashSet};
+use futures_util::StreamExt;
+use regex::Regex;
+use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::Write;
-use futures_util::StreamExt;
-use scraper::{Html, Selector};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
-use regex::Regex;
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
-
 
 #[derive(Deserialize, Serialize)]
 struct Show {
     path: String,
     episode: u32,
+    downloaded: u32,
     season: String,
     url: String,
     #[serde(rename = "episode links")]
@@ -22,12 +22,13 @@ struct Show {
 }
 
 fn get_json_data() -> HashMap<String, Show> {
-    let path = std::env::current_exe()
+    let path = env::current_exe()
         .expect("cant get exe path")
         .parent()
         .expect("cant get exe dir")
         .join("shows.json");
-    let shows: HashMap<String, Show> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let shows: HashMap<String, Show> =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     shows
 }
 fn emit(data: String, event_type: &str) {
@@ -36,11 +37,15 @@ fn emit(data: String, event_type: &str) {
     }
 }
 
-fn get_link(show: &str, get_first: bool) -> String {
+fn get_link(show: &str, offset: u32, get_first: bool) -> String {
     let shows: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
     let season = &show_info.season;
-    let episode = if get_first { 1.to_string() } else { show_info.episode.to_string() };
+    let episode = if get_first {
+        1.to_string()
+    } else {
+        (show_info.episode + offset).to_string()
+    };
     println!("{}", season);
     let episode_link = &show_info.episode_links[season][&episode];
 
@@ -51,11 +56,12 @@ fn get_link(show: &str, get_first: bool) -> String {
     }
 }
 #[tauri::command]
-async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
-    let shows: HashMap<String, Show> = get_json_data();
+async fn download(showstr: &str) -> Result<String, String> {
+    let mut shows: HashMap<String, Show> = get_json_data();
     let show = &shows[showstr];
     let mut season: String = show.season.to_string();
-    let mut episode: u32 = show.episode;
+    let mut episode: u32 = show.downloaded;
+    let mut offset: u32 = show.downloaded;
     if episode + offset > show.episode_links[&show.season].len() as u32 {
         println!("next episode in next season");
         scrape(showstr.to_string(), false).await;
@@ -64,15 +70,29 @@ async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
         episode = 1;
         offset = 0;
     }
-    let link = get_link(showstr, true);
-    let file_name = format!("{}/{}{}.{}", show.path, season, format!("{:0>2}", (episode + offset).to_string()), link.split(".").last().unwrap().to_string());
+    let link: &String = if !&show.episode_links[&season][&episode.to_string()].contains("https://")
+    {
+        &format!(
+            "https://a.111477.xyz{}",
+            &show.episode_links[&season][&episode.to_string()]
+        )
+    } else {
+        &show.episode_links[&season][&episode.to_string()].to_string()
+    };
+    let file_name = format!(
+        "{}/{}{}.{}",
+        show.path,
+        season,
+        format!("{:0>2}", (episode + offset).to_string()),
+        link.split(".").last().unwrap().to_string()
+    );
     //client logic
     if !std::path::Path::new(&file_name).exists() {
         println!("starting {:?}", file_name);
         let client = reqwest::Client::new();
         println!("{:?}", client);
         println!("{:?}", link);
-        let response = client.get(&link).send().await.map_err(|e| e.to_string())?;
+        let response = client.get(&*link).send().await.map_err(|e| e.to_string())?;
         println!("{:?}", response);
         if !response.status().is_success() {
             return Err(format!("Request failed: {}", response.status()));
@@ -92,7 +112,9 @@ async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
         let mut downloaded = 0;
         while let Some(chunk) = &stream.next().await {
             let chunk_error_handler = chunk.as_ref().map_err(|e| e.to_string())?;
-            file.write_all(&chunk_error_handler).map_err(|e| format!("Write failed: {}", e)).expect("error while writing");
+            file.write_all(&chunk_error_handler)
+                .map_err(|e| format!("Write failed: {}", e))
+                .expect("error while writing");
 
             downloaded += chunk_error_handler.len();
             if last_emit.elapsed().as_millis() > 5000 {
@@ -103,21 +125,39 @@ async fn download(showstr: &str, mut offset: u32) -> Result<String, String>{
             }
         }
 
-        println!(
-            "Downloaded {} converting it now",
-            file_name
-        );
+        println!("Downloaded {} converting it now", file_name);
         emit("Download Complete".to_string(), "downloadFinnished");
 
         let new_file_name: String = file_name.split_once(".").unwrap().0.to_string() + ".mp4";
 
-        let output = std::process::Command::new(format!("ffmpeg -i {} -c:v libx264 -preset slow -crf 22 -c:a aac {}", file_name, new_file_name))
-            .output()
-            .expect("failed to execute process");
+        let output = std::process::Command::new(format!(
+            "ffmpeg -i {} -c:v libx264 -preset slow -crf 22 -c:a aac {}",
+            file_name, new_file_name
+        ))
+        .output()
+        .expect("failed to execute process");
         println!("{:?}", output);
-    } else { println!("file already exists"); }
+    } else {
+        println!("file already exists");
+    }
+
+    shows.get_mut(showstr).unwrap().downloaded += 1;
+    let new_json = serde_json::to_string_pretty(&shows).unwrap();
+    std::fs::write("shows.json", new_json).expect("Writing Failed");
 
     Ok(file_name)
+}
+
+#[tauri::command]
+fn do_i_download(show: &str) -> bool {
+    let shows: HashMap<String, Show> = get_json_data();
+    let show_info = &shows[show];
+    let episode = &show_info.episode;
+    let downloaded = &show_info.downloaded;
+    if downloaded - episode < 2 {
+        return true;
+    }
+    false
 }
 
 #[tauri::command]
@@ -149,8 +189,7 @@ fn get_video_path(show: &str) -> String {
     "".to_string()
 }
 
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Default, Debug)]
 struct Item {
     url: String,
     size: u64,
@@ -160,8 +199,15 @@ fn get_lowests(total: u32, items: Vec<Item>) -> HashMap<String, String> {
     let mut lowests: HashMap<String, String> = HashMap::new();
     for episode in 1..=total {
         let epi = format!("E{:0>2}", episode);
-        lowests.insert(format!("{}", episode), items.iter().filter(|item| Regex::new(&epi).unwrap().find(&*item.url).is_some())
-            .min_by_key(|p| p.size).unwrap().url.clone()
+        lowests.insert(
+            format!("{}", episode),
+            items
+                .iter()
+                .filter(|item| Regex::new(&epi).unwrap().find(&*item.url).is_some())
+                .min_by_key(|p| p.size)
+                .unwrap()
+                .url
+                .clone(),
         );
     }
     lowests
@@ -176,28 +222,50 @@ fn get_season(show_info: &Show, first: bool) -> String {
 }
 
 async fn fetch_season_html(url: &str, season: &str) -> String {
-    reqwest::get(format!("{}Season%20{}", url, season.parse::<u32>().unwrap()))
-        .await.unwrap().text().await.unwrap()
+    reqwest::get(format!(
+        "{}Season%20{}",
+        url,
+        season.parse::<u32>().unwrap()
+    ))
+    .await
+    .unwrap()
+    .text()
+    .await
+    .unwrap()
 }
 
 fn parse_items(doc: &Html, target_url: &str) -> (Vec<String>, Vec<u64>) {
     let url_selector = Selector::parse("tr td a").unwrap();
     let size_selector = Selector::parse(".size").unwrap();
 
-    let links: Vec<String> = doc.select(&url_selector)
+    let links: Vec<String> = doc
+        .select(&url_selector)
         .filter_map(|x| x.value().attr("href"))
         .filter(|href| href.contains(target_url))
         .map(|href| href.to_string())
         .collect();
 
-    let sizes: Vec<u64> = doc.select(&size_selector)
+    let sizes: Vec<u64> = doc
+        .select(&size_selector)
         .filter_map(|x| {
             let html = x.inner_html();
             if html.contains("GB") {
-                Some(html.replace(" GB", "").parse::<f32>().map(|e| (e * 1024f32) as u64).unwrap())
+                Some(
+                    html.replace(" GB", "")
+                        .parse::<f32>()
+                        .map(|e| (e * 1024f32) as u64)
+                        .unwrap(),
+                )
             } else if html.contains("MB") {
-                Some(html.replace(" MB", "").parse::<f32>().map(|e| e as u64).unwrap())
-            } else { None }
+                Some(
+                    html.replace(" MB", "")
+                        .parse::<f32>()
+                        .map(|e| e as u64)
+                        .unwrap(),
+                )
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -208,11 +276,15 @@ fn count_episodes(doc: &Html) -> u32 {
     let url_selector = Selector::parse("tr td a").unwrap();
     let re = Regex::new(r"S\d+E\d+").unwrap();
     let mut seen: HashSet<String> = HashSet::new();
-    doc.select(&url_selector).filter(|x| {
-        if let Some(mat) = re.find(&x.inner_html()) {
-            seen.insert(mat.as_str().to_string())
-        } else { false }
-    }).count() as u32
+    doc.select(&url_selector)
+        .filter(|x| {
+            if let Some(mat) = re.find(&x.inner_html()) {
+                seen.insert(mat.as_str().to_string())
+            } else {
+                false
+            }
+        })
+        .count() as u32
 }
 
 fn build_items(mut links: Vec<String>, sizes: Vec<u64>) -> Vec<Item> {
@@ -220,7 +292,11 @@ fn build_items(mut links: Vec<String>, sizes: Vec<u64>) -> Vec<Item> {
         println!("not the same, removing first item");
         links.remove(0);
     }
-    links.into_iter().zip(sizes).map(|(url, size)| Item { url, size }).collect()
+    links
+        .into_iter()
+        .zip(sizes)
+        .map(|(url, size)| Item { url, size })
+        .collect()
 }
 
 #[tauri::command]
@@ -231,7 +307,8 @@ async fn scrape(show: String, first: bool) {
 
     let index_html = reqwest::get(&url).await.unwrap().text().await.unwrap();
     if !index_html.contains(&season.parse::<u32>().unwrap().to_string()) {
-        println!("season not found"); return;
+        println!("season not found");
+        return;
     }
 
     println!("found season");
@@ -247,11 +324,18 @@ async fn scrape(show: String, first: bool) {
     let mut new = content[&show].episode_links.clone();
     new.insert(format!("{:0>2}", season), lowest);
 
-    let Some(show_data) = content.get_mut(&show) else { println!("show not found"); return };
+    let Some(show_data) = content.get_mut(&show) else {
+        println!("show not found");
+        return;
+    };
     show_data.episode_links = new;
 
     let new_json = serde_json::to_string_pretty(&content).unwrap();
-    let path = std::env::current_exe().unwrap().parent().unwrap().join("shows.json");
+    let path = env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("shows.json");
     std::fs::write(&path, new_json).expect("Writing Failed");
 }
 
@@ -261,13 +345,14 @@ async fn add_show(name: String, url: String, path: String) -> bool {
     let new = Show {
         path,
         episode: 1,
+        downloaded: 0,
         season: "01".to_string(),
         url,
-        episode_links: HashMap::new()
+        episode_links: HashMap::new(),
     };
     content.insert(name.clone(), new);
     let new_json = serde_json::to_string_pretty(&content).unwrap();
-    let path = std::env::current_exe()
+    let path = env::current_exe()
         .expect("cant get exe path")
         .parent()
         .expect("cant get exe dir")
@@ -282,15 +367,15 @@ fn ended(show: &str) {
     let show_info = &shows[show];
     let file_name = format!("{}{:0>2}", show_info.season, (show_info.episode + 1));
     let re = Regex::new(&file_name).unwrap();
-    let episodes: Vec<_> = std::fs::read_dir(&show_info.path).unwrap()
-        .filter(|x| re.is_match(x.as_ref().unwrap().path().display().to_string().as_str())).collect();
+    let episodes = std::fs::read_dir(&show_info.path)
+        .map(|x| x.map(|y| y.unwrap().path().display().to_string()));
+
     println!("looking for {} \n {:#?}", file_name, episodes);
-    if episodes.len() != 0 {
-        
+    if episodes.iter().len() != 0 {
+        emit(episodes.unwrap().next().unwrap(), "NextEpisode");
+        download(show);
     }
-
 }
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -304,7 +389,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![download, get_options, get_video_path, scrape, add_show, ended])
+        .invoke_handler(tauri::generate_handler![
+            download,
+            get_options,
+            get_video_path,
+            scrape,
+            add_show,
+            ended,
+            do_i_download
+        ])
         .setup(|app| {
             APP_HANDLE.set(app.handle().clone()).unwrap();
             Ok(())
@@ -312,3 +405,5 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+

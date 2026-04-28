@@ -64,7 +64,7 @@
   }
 
   function downloadFile() {
-   invoke("download", { showstr: show, offset: 0 }).then((res) => {console.log(res)})
+   invoke("download", { showstr: show, offset: 0 })
   }
   async function getVideoPath(show: string) {
    const file: string = await invoke("get_video_path", { show: show })
@@ -99,10 +99,16 @@
     `download progress: ${event.payload}%`
    )
   })
+ listen("NextEpisode" , (event) => {
+  console.log(event.payload)
+  src = convertFileSrc(event.payload as string)
+ })
  listen("downloadFinished", event => {
   notify("Download Progress", event.payload + "%")
-  
- })
+  invoke("do_i_download", {show: show}).then((res) => {
+   if (res == true) {
+    downloadFile()
+   }})})
 
 </script>
 

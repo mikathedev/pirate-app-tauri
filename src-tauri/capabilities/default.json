@@ -12,23 +12,6 @@
     "core:window:allow-start-dragging",
     "core:window:allow-close",
     "dialog:default",
-    "fs:allow-all",
-    {
-      "identifier": "fs:allow-read",
-      "allow": [
-        {
-          "path": "**"
-        }
-      ]
-    },
-    {
-      "identifier": "fs:allow-write",
-      "allow": [
-        {
-          "path": "**"
-        }
-      ]
-    }
-  ],
-  "capabilities": []
+    "fs:read-all"
+    ]
 }

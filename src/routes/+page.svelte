@@ -64,7 +64,7 @@
   }
 
   function downloadFile() {
-   invoke("download", { showstr: show, offset: 0 })
+   invoke("download", { showstr: show })
   }
   async function getVideoPath(show: string) {
    const file: string = await invoke("get_video_path", { show: show })
@@ -75,6 +75,35 @@
 
   onMount((): void =>{
    get_options()
+   setTimeout(() => {
+    invoke("do_i_download", {show: show})
+    getVideoPath(show)}, 3000)
+
+
+   listen("BE" , (event) => {
+    console.log(event.payload)
+    output = event.payload
+   })
+
+   listen("download" , (event) => {
+    console.log(event.payload)
+    downloaded = event.payload as number
+    console.log(
+            `download progress: ${event.payload}%`
+    )
+   })
+   listen("NextEpisode" , (event) => {
+    console.log(event.payload)
+    src = convertFileSrc(event.payload as string)
+    notify("Next Episode", "next episode: " + event.payload)
+   })
+   listen("downloadFinished", event => {
+    notify("Download Progress", event.payload + "%")
+    invoke("do_i_download", {show: show}).then((res) => {
+     if (res == true) {
+      downloadFile()
+     }})})
+
   })
 
   function openDialog() {
@@ -86,31 +115,6 @@
    dialog.close()
    document.body.style.overflow = '' // restore
   }
-
-  listen("BE" , (event) => {
-   console.log(event.payload)
-   output = event.payload
-  })
-
-  listen("download" , (event) => {
-   console.log(event.payload)
-   downloaded = event.payload as number
-   console.log(
-    `download progress: ${event.payload}%`
-   )
-  })
- listen("NextEpisode" , (event) => {
-  console.log(event.payload)
-  src = convertFileSrc(event.payload as string)
-  notify("Next Episode", "next episode: " + event.payload)
- })
- listen("downloadFinished", event => {
-  notify("Download Progress", event.payload + "%")
-  invoke("do_i_download", {show: show}).then((res) => {
-   if (res == true) {
-    downloadFile()
-   }})})
-
 </script>
 
 <div class="navwrap">
@@ -123,7 +127,6 @@
  <button onclick={() => getVideoPath(show)}>Get Video</button>
  <button onclick={() => downloadFile()}>run download</button>
  <button class="open-modal" onclick={() => {openDialog()}}>Add Show</button>
- <h3>{output}</h3>
  <progress max="100" value="{downloaded}"></progress>
  <div data-tauri-drag-region></div>
  <button aria-label="close" onclick={closeWindow}>

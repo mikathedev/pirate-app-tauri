@@ -16,7 +16,8 @@
         "width": 800,
         "height": 600,
         "backgroundColor": "#1c1c1c",
-        "decorations": false
+        "decorations": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

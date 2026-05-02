@@ -7,6 +7,7 @@ use std::env;
 use std::io::Write;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
+use tokio::runtime::Runtime;
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -39,7 +40,6 @@ fn emit(data: String, event_type: &str) {
 }
 async fn resolve_season_episode(
     show: &Show,
-    showstr: &str,
     offset: u32
 ) -> (String, u32, u32) {
     let season = format!("{:0>2}", show.season);
@@ -63,13 +63,13 @@ fn resolve_link(show: &Show, season: &str, episode: u32) -> String {
     }
 }
 
-fn build_file_name(show: &Show, season: &str, episode: u32, offset: u32, link: &str) -> String {
+fn build_file_name(show: &Show, season: &str, episode: u32, link: &str) -> String {
     let ext = link.split('.').last().unwrap_or("mp4");
     format!(
         "{}/{}{}.{}",
         show.path,
         season,
-        format!("{:0>2}", episode + offset),
+        format!("{:0>2}", episode),
         ext
     )
 }
@@ -85,6 +85,7 @@ async fn stream_to_file(response: reqwest::Response, file_name: &str) -> Result<
     let mut file = std::fs::File::create(file_name).map_err(|e| e.to_string())?;
     let mut stream = response.bytes_stream();
     let mut downloaded = 0usize;
+    let mut last_download = 0usize;
     let mut last_emit = std::time::Instant::now();
 
     while let Some(chunk) = stream.next().await {
@@ -96,7 +97,8 @@ async fn stream_to_file(response: reqwest::Response, file_name: &str) -> Result<
         if last_emit.elapsed().as_millis() > 5000 {
             let progress = downloaded as f64 / size as f64 * 100.0;
             emit(format!("{:.2}", progress), "download");
-            println!("{:.2}%", progress);
+            println!("{:.2}%   {}", progress, (last_download - downloaded)/5);
+            last_download = downloaded;
             last_emit = std::time::Instant::now();
         }
     }
@@ -106,8 +108,7 @@ async fn stream_to_file(response: reqwest::Response, file_name: &str) -> Result<
 fn convert_to_mp4(file_name: &str) -> String {
     let new_name = file_name.split_once('.').unwrap().0.to_string() + ".mp4";
     let output = std::process::Command::new("ffmpeg")
-        // split into proper args instead of one shell string
-        .args(["-i", file_name, "-c:v", "libx264", "-preset", "slow", "-crf", "22", "-c:a", "aac", &new_name])
+        .args(["-i", file_name, "-c:v", "libx264", "-preset", "slow", "-crf", "22", "-c:a", "aac", "-af \"volume=1.5\"", &new_name])
         .output()
         .expect("failed to execute ffmpeg");
     println!("{:?}", output);
@@ -119,8 +120,9 @@ fn convert_to_mp4(file_name: &str) -> String {
 async fn download(showstr: &str, offset: u32,) -> Result<String, String> {
     let mut shows: HashMap<String, Show> = get_json_data();
     let show = &shows[showstr];
+    println!("Started downloading: {}", showstr);
 
-    let (season, episode, offset) = resolve_season_episode(show, showstr, offset).await;
+    let (season, episode, offset) = resolve_season_episode(show, offset).await;
 
     // scrape next season data if we rolled over
     if offset == 0 && episode == 1 {
@@ -128,50 +130,54 @@ async fn download(showstr: &str, offset: u32,) -> Result<String, String> {
     }
 
     let link = resolve_link(&shows[showstr], &season, episode);
-    let file_name = build_file_name(&shows[showstr], &season, episode, offset, &link);
+    let file_name = build_file_name(&shows[showstr], &season, episode, &link);
 
     if !std::path::Path::new(&file_name).exists() {
-        println!("Starting: {}", file_name);
+        println!("Starting: {} {}", file_name, link);
         let response = reqwest::Client::new()
             .get(&link)
             .send()
             .await
             .map_err(|e| e.to_string())?;
-
+        println!("Finnished resppnse {:?}", response);
         if !response.status().is_success() {
             return Err(format!("Request failed: {}", response.status()));
-        }
+        } else { println!("{:?}", response.status()); }
 
         stream_to_file(response, &file_name).await?;
         emit(format!("{:.2}", 100.0), "download");
         emit("Download Complete".to_string(), "downloadFinnished");
         convert_to_mp4(&file_name);
+        let path = env::current_exe().unwrap().parent().unwrap().join("shows.json");
+        // persist incremented download count
+        shows.get_mut(showstr).unwrap().downloaded += 1;
+        std::fs::write(&path, serde_json::to_string_pretty(&shows).unwrap())
+            .expect("Writing Failed");
     } else {
         println!("File already exists");
     }
 
-    // persist incremented download count
-    shows.get_mut(showstr).unwrap().downloaded += 1;
-    std::fs::write("shows.json", serde_json::to_string_pretty(&shows).unwrap())
-        .expect("Writing Failed");
 
     Ok(file_name)
 }
 
 
 #[tauri::command]
-fn do_i_download(show: &str) {
+async fn do_i_download(show: &str) -> Result<(), String> {
     let shows: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
-    let episode = &show_info.episode;
-    let downloaded = &show_info.downloaded;
+    let episode = show_info.episode as i32;
+    let downloaded = show_info.downloaded as i32;
     println!("{}: {}/{}", show, downloaded, episode);
-    if downloaded - episode < 2 {
+    if downloaded - episode < 2_i32 {
         println!("downloading");
         let offset = downloaded - episode;
-        _ = download(show, offset);
+        let _ = download(show, if offset < 0 { (offset*-1) as u32 } else { offset as u32 }).await;
+    } else {
+        let offset = downloaded - episode;
+        println!("not downloading {} - {} = {}", downloaded, episode, offset);
     }
-    println!("not downloading {} {}", downloaded, episode);
+    Ok(())
 }
 
 #[tauri::command]
@@ -200,7 +206,8 @@ fn get_video_path(show: &str) -> String {
             return path_str;
         }
     }
-    do_i_download(show);
+    let rt = Runtime::new().unwrap();
+    rt.block_on(do_i_download(show)).expect("panic on get video path");
     "".to_string()
 }
 
@@ -377,24 +384,40 @@ async fn add_show(name: String, url: String, path: String) -> bool {
     true
 }
 #[tauri::command]
-fn ended(show: &str) {
-    let mut shows: HashMap<String, Show> = get_json_data();
+async fn ended(show: &str) -> Result<(), String> {
+    let shows: HashMap<String, Show> = get_json_data();
+    let mut shows2: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
-    let file_name = format!("{}{:0>2}", show_info.season, show_info.episode + 1);
+
+    let path = env::current_exe().unwrap().parent().unwrap().join("shows.json");
+    let season_len = &show_info.episode_links[&show_info.season].len();
+    if &show_info.episode.clone() + 1 > *season_len as u32 {
+        scrape(show.to_string(), false).await;
+        let new_season = format!("{:0>2}", show_info.season.parse::<u32>().unwrap() + 1);
+        shows2.get_mut(show).unwrap().episode = 1;
+        shows2.get_mut(show).unwrap().season = new_season;
+    } else {
+        shows2.get_mut(show).unwrap().episode += 1;
+    }
+    let file_name = format!("{}{:0>2}", shows2[show].season, shows2[show].episode);
     let re = Regex::new(&file_name).unwrap();
     let episodes = std::fs::read_dir(&show_info.path).expect("cant read dir")
         .map(|x| x.unwrap().path().display().to_string())
         .collect::<Vec<_>>();
-
     println!("looking for {} \n {:#?}", file_name, episodes);
+
     for ep in episodes {
         if re.is_match(&*ep) {
-            emit(ep, "NextEpisode");
-            shows.get_mut(show).unwrap().episode += 1;
-            std::fs::write("shows.json", serde_json::to_string_pretty(&shows).unwrap()).expect("FAILED WRITING AT ENDED");
-            _ = download(show, 1);
+            emit(ep.clone(), "NextEpisode");
+            println!("found {}", &*ep);
+            std::fs::write(&path,
+                           serde_json::to_string_pretty(&shows).unwrap()).expect("FAILED WRITING AT ENDED");
+            do_i_download(show).await.expect("panic");
         }
     }
+
+    do_i_download(show).await.expect("panic");
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

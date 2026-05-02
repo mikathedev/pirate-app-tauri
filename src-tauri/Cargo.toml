@@ -28,4 +28,5 @@ futures-util = "0.3.32"
 scraper = "0.26.0"
 regex = "1.12.3"
 tauri-plugin-fs = "2.5.0"
+tokio = "1.52.1"
 

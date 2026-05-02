@@ -124,8 +124,7 @@
      <option value={show}>{show}</option>
     {/each}
  </select>
- <button onclick={() => getVideoPath(show)}>Get Video</button>
- <button onclick={() => downloadFile()}>run download</button>
+ <button onclick={() => invoke("ended", {show: show})}>Next Episode</button>
  <button class="open-modal" onclick={() => {openDialog()}}>Add Show</button>
  <progress max="100" value="{downloaded}"></progress>
  <div data-tauri-drag-region></div>

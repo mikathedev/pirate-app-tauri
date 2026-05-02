@@ -1,4 +1,4 @@
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryFutureExt};
 use regex::Regex;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ fn resolve_link(show: &Show, season: &str, episode: u32) -> String {
 fn build_file_name(show: &Show, season: &str, episode: u32, link: &str) -> String {
     let ext = link.split('.').last().unwrap_or("mp4");
     format!(
-        "{}/{}{}.{}",
+        "{}/{}{}.{}.tmp",
         show.path,
         season,
         format!("{:0>2}", episode),
@@ -97,7 +97,7 @@ async fn stream_to_file(response: reqwest::Response, file_name: &str) -> Result<
         if last_emit.elapsed().as_millis() > 5000 {
             let progress = downloaded as f64 / size as f64 * 100.0;
             emit(format!("{:.2}", progress), "download");
-            println!("{:.2}%   {}", progress, (last_download - downloaded)/5);
+            println!("{:.2}%   {} MB/s", progress, ((downloaded - last_download)/5)/1024^2);
             last_download = downloaded;
             last_emit = std::time::Instant::now();
         }
@@ -108,11 +108,28 @@ async fn stream_to_file(response: reqwest::Response, file_name: &str) -> Result<
 fn convert_to_mp4(file_name: &str) -> String {
     let new_name = file_name.split_once('.').unwrap().0.to_string() + ".mp4";
     let output = std::process::Command::new("ffmpeg")
-        .args(["-i", file_name, "-c:v", "libx264", "-preset", "slow", "-crf", "22", "-c:a", "aac", "-af \"volume=1.5\"", &new_name])
+        .args(["-i", file_name, "-c:v", "libx264", "-preset", "slow", "-crf", "22", "-c:a", "aac", "-af", "volume=1.5", &new_name])
         .output()
         .expect("failed to execute ffmpeg");
     println!("{:?}", output);
     new_name
+}
+
+async fn get_res(link: &str) -> Result<reqwest::Response, String> {
+    let response = reqwest::Client::new()
+        .get(&*link)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("Status: {:?}", response.status());
+    if response.status() == 429 {
+        emit("429".to_string(), "Err");
+        Err("429".to_string())
+    } else if response.status() == 200 {
+        Ok(response)
+    } else {
+        Err(response.status().to_string())
+    }
 }
 
 
@@ -134,15 +151,7 @@ async fn download(showstr: &str, offset: u32,) -> Result<String, String> {
 
     if !std::path::Path::new(&file_name).exists() {
         println!("Starting: {} {}", file_name, link);
-        let response = reqwest::Client::new()
-            .get(&link)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        println!("Finnished resppnse {:?}", response);
-        if !response.status().is_success() {
-            return Err(format!("Request failed: {}", response.status()));
-        } else { println!("{:?}", response.status()); }
+        let response = get_res(&link).map_err(|e| emit(e.to_string(), "Err")).await.unwrap();
 
         stream_to_file(response, &file_name).await?;
         emit(format!("{:.2}", 100.0), "download");
@@ -383,9 +392,10 @@ async fn add_show(name: String, url: String, path: String) -> bool {
     scrape(name, true).await;
     true
 }
+
 #[tauri::command]
 async fn ended(show: &str) -> Result<(), String> {
-    let shows: HashMap<String, Show> = get_json_data();
+    let mut shows: HashMap<String, Show> = get_json_data();
     let mut shows2: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
 
@@ -410,8 +420,10 @@ async fn ended(show: &str) -> Result<(), String> {
         if re.is_match(&*ep) {
             emit(ep.clone(), "NextEpisode");
             println!("found {}", &*ep);
+            shows.get_mut(show).unwrap().episode += 1;
             std::fs::write(&path,
                            serde_json::to_string_pretty(&shows).unwrap()).expect("FAILED WRITING AT ENDED");
+            println!("wrote to file");
             do_i_download(show).await.expect("panic");
         }
     }

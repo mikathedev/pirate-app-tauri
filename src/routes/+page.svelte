@@ -1,7 +1,7 @@
 <script lang="ts">
  import {convertFileSrc, invoke} from "@tauri-apps/api/core";
  import {getCurrentWindow} from "@tauri-apps/api/window";
- import {onMount} from "svelte";
+ import {onDestroy, onMount} from "svelte";
  import {open} from "@tauri-apps/plugin-dialog";
  import {listen} from "@tauri-apps/api/event";
 
@@ -66,45 +66,42 @@
   function downloadFile() {
    invoke("download", { showstr: show })
   }
-  async function getVideoPath(show: string) {
+  async function getVideoPath() {
    const file: string = await invoke("get_video_path", { show: show })
    src = convertFileSrc(file)
    videoele.load()
    await videoele.play()
   }
 
-  onMount((): void =>{
-   get_options()
-   setTimeout(() => {
-    invoke("do_i_download", {show: show})
-    getVideoPath(show)}, 3000)
+  let unlisteners: (() => void)[] = []
 
+  onMount(async () =>{
+    await get_options()
+    await invoke("do_i_download", {show: show})
+    await getVideoPath()
+    unlisteners.push(await listen("BE", (event) => {
+     output = event.payload
+    }))
+    unlisteners.push(await listen("download", (event) => {
+     downloaded = event.payload as number
+    }))
 
-   listen("BE" , (event) => {
-    console.log(event.payload)
-    output = event.payload
-   })
-
-   listen("download" , (event) => {
-    console.log(event.payload)
-    downloaded = event.payload as number
-    console.log(
-            `download progress: ${event.payload}%`
-    )
-   })
-   listen("NextEpisode" , (event) => {
-    console.log(event.payload)
-    src = convertFileSrc(event.payload as string)
-    notify("Next Episode", "next episode: " + event.payload)
-   })
-   listen("downloadFinished", event => {
+    unlisteners.push(await listen("NextEpisode", (event) => {
+     src = convertFileSrc(event.payload as string)
+    }))
+   unlisteners.push(await listen("downloadFinished", event => {
     notify("Download Progress", event.payload + "%")
+    downloaded = 0
     invoke("do_i_download", {show: show}).then((res) => {
      if (res == true) {
       downloadFile()
-     }})})
+     }})
+   }))
 
   })
+ onDestroy(() => {
+  unlisteners.forEach(unlisten => unlisten())
+ })
 
   function openDialog() {
    dialog.showModal()
@@ -119,7 +116,7 @@
 
 <div class="navwrap">
 <nav>
- <select bind:value={show}>
+ <select onchange={() => getVideoPath()} bind:value={show}>
     {#each options as show}
      <option value={show}>{show}</option>
     {/each}

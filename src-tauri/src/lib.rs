@@ -6,10 +6,11 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::Write;
 use std::sync::OnceLock;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::runtime::Runtime;
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static SHOWS_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 #[derive(Deserialize, Serialize)]
 struct Show {
@@ -22,15 +23,34 @@ struct Show {
     episode_links: HashMap<String, HashMap<String, String>>,
 }
 
-fn get_json_data() -> HashMap<String, Show> {
-    let path = env::current_exe()
-        .expect("cant get exe path")
-        .parent()
-        .expect("cant get exe dir")
+fn ensure_shows_json() {
+    let dest = APP_HANDLE.get().unwrap()
+        .path().app_data_dir().unwrap()
         .join("shows.json");
-    println!("{:?}", path);
+
+    if !dest.exists() {
+        // CHANGED: print so you can see the actual path in console
+        let resource_dir = APP_HANDLE.get().unwrap()
+            .path().resource_dir().unwrap();
+        println!("resource dir: {:?}", resource_dir);
+        println!("looking for: {:?}", resource_dir.join("resources/shows.json"));
+
+        // CHANGED: try without the subdirectory prefix
+        let src = resource_dir.join("shows.json");
+        println!("also trying: {:?}", src);
+
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::copy(src, &dest).unwrap();
+    }
+
+    SHOWS_PATH.set(dest).unwrap();
+}
+
+
+fn get_json_data() -> HashMap<String, Show> {
+    println!("getting json data from: {}", SHOWS_PATH.get().unwrap().display());
     let shows: HashMap<String, Show> =
-        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).expect("cant read json");
+        serde_json::from_str(&std::fs::read_to_string(SHOWS_PATH.get().unwrap()).unwrap()).expect("cant read json");
     shows
 }
 fn emit(data: String, event_type: &str) {
@@ -45,6 +65,7 @@ async fn resolve_season_episode(
     let season = format!("{:0>2}", show.season);
     let episode = show.episode;
 
+    println!("{} {} {}", &season, episode, offset);
     if episode + offset > show.episode_links[&show.season].len() as u32 {
         let next_season = format!("{:0>2}", season.parse::<u32>().unwrap() + 1);
         let nepi = episode + offset - show.episode_links[&show.season].len() as u32;
@@ -64,6 +85,7 @@ fn resolve_link(show: &Show, season: &str, episode: u32) -> String {
 }
 
 fn build_file_name(show: &Show, season: &str, episode: u32, link: &str) -> String {
+    println!("{} {} {}", season, episode, link);
     let ext = link.split('.').last().unwrap_or("mp4");
     format!(
         "{}/{}{}.{}.tmp",
@@ -97,7 +119,7 @@ async fn stream_to_file(response: reqwest::Response, file_name: &str) -> Result<
         if last_emit.elapsed().as_millis() > 5000 {
             let progress = downloaded as f64 / size as f64 * 100.0;
             emit(format!("{:.2}", progress), "download");
-            println!("{:.2}%   {} MB/s", progress, ((downloaded - last_download)/5)/1024^2);
+            println!("{:.2}%   {} MB/s", progress, ((downloaded - last_download)/5)/1024*1024);
             last_download = downloaded;
             last_emit = std::time::Instant::now();
         }
@@ -112,6 +134,7 @@ fn convert_to_mp4(file_name: &str) -> String {
         .output()
         .expect("failed to execute ffmpeg");
     println!("{:?}", output);
+    std::fs::remove_file(file_name).expect("failed to remove file");
     new_name
 }
 
@@ -149,6 +172,7 @@ async fn download(showstr: &str, offset: u32,) -> Result<String, String> {
     let link = resolve_link(&shows[showstr], &season, episode);
     let file_name = build_file_name(&shows[showstr], &season, episode, &link);
 
+    println!("Starting: {} {}", file_name, link);
     if !std::path::Path::new(&file_name).exists() {
         println!("Starting: {} {}", file_name, link);
         let response = get_res(&link).map_err(|e| emit(e.to_string(), "Err")).await.unwrap();
@@ -157,10 +181,9 @@ async fn download(showstr: &str, offset: u32,) -> Result<String, String> {
         emit(format!("{:.2}", 100.0), "download");
         emit("Download Complete".to_string(), "downloadFinnished");
         convert_to_mp4(&file_name);
-        let path = env::current_exe().unwrap().parent().unwrap().join("shows.json");
         // persist incremented download count
         shows.get_mut(showstr).unwrap().downloaded += 1;
-        std::fs::write(&path, serde_json::to_string_pretty(&shows).unwrap())
+        std::fs::write(SHOWS_PATH.get().unwrap(), serde_json::to_string_pretty(&shows).unwrap())
             .expect("Writing Failed");
     } else {
         println!("File already exists");
@@ -362,12 +385,7 @@ async fn scrape(show: String, first: bool) {
     show_data.episode_links = new;
 
     let new_json = serde_json::to_string_pretty(&content).unwrap();
-    let path = env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("shows.json");
-    std::fs::write(&path, new_json).expect("Writing Failed");
+    std::fs::write(SHOWS_PATH.get().unwrap(), new_json).expect("Writing Failed");
 }
 
 #[tauri::command]
@@ -383,12 +401,7 @@ async fn add_show(name: String, url: String, path: String) -> bool {
     };
     content.insert(name.clone(), new);
     let new_json = serde_json::to_string_pretty(&content).unwrap();
-    let path = env::current_exe()
-        .expect("cant get exe path")
-        .parent()
-        .expect("cant get exe dir")
-        .join("shows.json");
-    std::fs::write(&path, new_json).expect("Writing Failed");
+    std::fs::write(SHOWS_PATH.get().unwrap(), new_json).expect("Writing Failed");
     scrape(name, true).await;
     true
 }
@@ -399,7 +412,6 @@ async fn ended(show: &str) -> Result<(), String> {
     let mut shows2: HashMap<String, Show> = get_json_data();
     let show_info = &shows[show];
 
-    let path = env::current_exe().unwrap().parent().unwrap().join("shows.json");
     let season_len = &show_info.episode_links[&show_info.season].len();
     if &show_info.episode.clone() + 1 > *season_len as u32 {
         scrape(show.to_string(), false).await;
@@ -421,7 +433,7 @@ async fn ended(show: &str) -> Result<(), String> {
             emit(ep.clone(), "NextEpisode");
             println!("found {}", &*ep);
             shows.get_mut(show).unwrap().episode += 1;
-            std::fs::write(&path,
+            std::fs::write(SHOWS_PATH.get().unwrap(),
                            serde_json::to_string_pretty(&shows).unwrap()).expect("FAILED WRITING AT ENDED");
             println!("wrote to file");
             do_i_download(show).await.expect("panic");
@@ -456,6 +468,7 @@ pub fn run() {
         ])
         .setup(|app| {
             APP_HANDLE.set(app.handle().clone()).unwrap();
+            ensure_shows_json();
             Ok(())
         })
         .run(tauri::generate_context!())
